@@ -13,6 +13,13 @@ Flerp is a command-line tool written in Rust that provides structural analysis, 
 
 ## 🚀 Installation
 
+### easy method
+```
+cargo install flerp
+```
+
+### if you contribute
+
 1.  **Clone the repository (if you haven't already):**
     ```bash
     git clone https://github.com/Huseynteymurzade28/flerp.git
