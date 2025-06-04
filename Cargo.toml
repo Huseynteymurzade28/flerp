@@ -7,7 +7,7 @@ description = "CLI tool that does XYZ"
 license = "MIT"
 repository = "https://github.com/Huseynteymurzade28/flerp"
 homepage = "https://github.com/Huseynteymurzade28/flerp"
-readme = "README.md"
+readme = "README.MD"
 
 
 [dependencies]
