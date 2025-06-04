@@ -1,7 +1,13 @@
 [package]
 name = "flerp"
 version = "0.1.0"
-edition = "2021"
+edition = "2021"  
+authors = ["Huseyn"]
+description = "CLI tool that does XYZ"       
+license = "MIT"                            
+repository = "https://github.com/Huseynteymurzade28/flerp" 
+homepage = "https://github.com/Huseynteymurzade28/flerp"                   
+
 
 [dependencies]
 colored = "3.0.0"
