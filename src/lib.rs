@@ -4,6 +4,27 @@ use std::error::Error;
 use std::fs;
 
 pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
+    
+    println!("  .--.  ");
+    println!(" /  _ \\ ");
+    println!("|  o o |");
+    println!(" \\  ^ / ");
+    println!("  `--'  ");
+    println!("   ||   ");
+    println!("        "); 
+
+    println!("    _________________________");
+    println!("   /                        //");
+    println!("  /   Flerp Text Analysis  //");
+    println!(" /    Content & Insights  //");
+    println!("/________________________//");
+    println!("(________________________(/");
+    println!("   \\                      \\");
+    println!("    \\   Keywords, Stats,    \\");
+    println!("     \\   Search Results...  \\");
+    println!("      \\______________________\\");
+    println!(""); 
+
     let contents = fs::read_to_string(config.file_name)?;
 
     let structural_analysis_results = analyze_structure(&contents);
@@ -89,7 +110,7 @@ pub struct StructuralAnalysisResults {
 pub fn analyze_structure(contents: &str) -> StructuralAnalysisResults {
     let lines = contents.lines().count();
     let words = contents.split_whitespace().count();
-    let stanzas = contents.split("\n\n").count(); 
+    let stanzas = contents.split("\n\n").count();
 
     StructuralAnalysisResults {
         lines,
@@ -112,7 +133,7 @@ pub fn extract_keywords(contents: &str, top_n: usize) -> Vec<(String, usize)> {
     }
 
     let mut sorted_keywords: Vec<(String, usize)> = word_counts.into_iter().collect();
-    sorted_keywords.sort_by(|a, b| b.1.cmp(&a.1)); 
+    sorted_keywords.sort_by(|a, b| b.1.cmp(&a.1));
     sorted_keywords.truncate(top_n);
     sorted_keywords
 }
