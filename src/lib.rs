@@ -1,17 +1,17 @@
+use colored::*;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
-use std::fs;
+use std::fs; // Added for colored output
 
 pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
-    
     println!("  .--.  ");
     println!(" /  _ \\ ");
     println!("|  o o |");
     println!(" \\  ^ / ");
     println!("  `--'  ");
     println!("   ||   ");
-    println!("        "); 
+    println!("        ");
 
     println!("    _________________________");
     println!("   /                        //");
@@ -23,30 +23,81 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
     println!("    \\   Keywords, Stats,    \\");
     println!("     \\   Search Results...  \\");
     println!("      \\______________________\\");
-    println!(""); 
+    println!("");
 
     let contents = fs::read_to_string(config.file_name)?;
 
     let structural_analysis_results = analyze_structure(&contents);
-    println!("Structural Analysis:");
-    println!("  Lines: {}", structural_analysis_results.lines);
-    println!("  Words: {}", structural_analysis_results.words);
-    println!("  Stanzas: {}", structural_analysis_results.stanzas);
+    println!("{}", "Structural Analysis:".cyan().bold());
+    println!(
+        "  Lines: {}",
+        structural_analysis_results.lines.to_string().yellow()
+    );
+    println!(
+        "  Words: {}",
+        structural_analysis_results.words.to_string().yellow()
+    );
+    println!(
+        "  Characters: {}",
+        structural_analysis_results.characters.to_string().yellow()
+    ); // Added character count
+    println!(
+        "  Stanzas: {}",
+        structural_analysis_results.stanzas.to_string().yellow()
+    );
 
     let keywords = extract_keywords(&contents, 5); // Extract top 5 keywords
-    println!("\nKeywords (Top 5):");
+    println!("\n{}", "Keywords (Top 5):".cyan().bold());
     for (keyword, count) in keywords {
-        println!("  {}: {}", keyword, count);
+        println!("  {}: {}", keyword.green().bold(), count.to_string().blue());
     }
 
-    let res = if config.case_sensitive {
+    println!("\n{}", "Search Results:".cyan().bold());
+    let search_results = if config.case_sensitive {
         search(&config.query, &contents)
     } else {
         search_case_insensitive(&config.query, &contents)
     };
 
-    for line in res {
-        println!("{}", line);
+    if search_results.is_empty() {
+        println!("{}", "  No matches found.".italic());
+    } else {
+        for line_content in search_results {
+            let query_to_highlight = &config.query;
+            if config.case_sensitive {
+                let mut last_end = 0;
+                for (start, part) in line_content.match_indices(query_to_highlight) {
+                    print!("{}", &line_content[last_end..start]);
+                    print!("{}", part.magenta().bold());
+                    last_end = start + part.len();
+                }
+                println!("{}", &line_content[last_end..]);
+            } else {
+                // Case-insensitive highlighting
+                let lower_query = query_to_highlight.to_lowercase();
+                let mut last_end = 0;
+                let mut current_search_pos = 0;
+                let lower_line_content = line_content.to_lowercase();
+
+                while let Some(start_in_lower) =
+                    lower_line_content[current_search_pos..].find(&lower_query)
+                {
+                    let actual_start = current_search_pos + start_in_lower;
+                    let match_len = lower_query.len();
+                    let actual_end = actual_start + match_len;
+
+                    print!("{}", &line_content[last_end..actual_start]);
+                    print!("{}", (&line_content[actual_start..actual_end]).red().bold());
+
+                    last_end = actual_end;
+                    current_search_pos = actual_end;
+                    if current_search_pos >= line_content.len() {
+                        break;
+                    }
+                }
+                println!("{}", &line_content[last_end..]);
+            }
+        }
     }
 
     Ok(())
@@ -88,11 +139,11 @@ pub fn search<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
 }
 
 pub fn search_case_insensitive<'a>(query: &str, contents: &'a str) -> Vec<&'a str> {
-    let query = query.to_lowercase();
+    let query_lower = query.to_lowercase(); // Renamed for clarity
     let mut res = Vec::new();
 
     for line in contents.lines() {
-        if line.to_lowercase().contains(&query) {
+        if line.to_lowercase().contains(&query_lower) {
             res.push(line);
         }
     }
@@ -103,6 +154,7 @@ pub fn search_case_insensitive<'a>(query: &str, contents: &'a str) -> Vec<&'a st
 pub struct StructuralAnalysisResults {
     pub lines: usize,
     pub words: usize,
+    pub characters: usize, // Added characters
     pub stanzas: usize,
 }
 
@@ -110,11 +162,13 @@ pub struct StructuralAnalysisResults {
 pub fn analyze_structure(contents: &str) -> StructuralAnalysisResults {
     let lines = contents.lines().count();
     let words = contents.split_whitespace().count();
-    let stanzas = contents.split("\n\n").count();
+    let characters = contents.chars().count(); // Calculate characters
+    let stanzas = contents.split("\\n\\n").count(); // Note: Rust string literals need double backslash for newline
 
     StructuralAnalysisResults {
         lines,
         words,
+        characters,
         stanzas,
     }
 }
