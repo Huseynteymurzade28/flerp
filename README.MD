@@ -1,131 +1,110 @@
-# 🌟 flerp 🌟
+# 🔍 Flerp - Beautiful TUI Text Analysis Tool
 
-**Flerp Text Analysis** - Uncover content & insights from your text files! 🕵️‍♂️
-
-Flerp is a command-line tool written in Rust that provides structural analysis, keyword extraction, and text search functionalities for your documents.
+A powerful terminal-based text analysis tool with an interactive user interface built with Rust and Ratatui.
 
 ## ✨ Features
 
-- **Structural Analysis**: Get counts of lines, words, and stanzas.
-- **Keyword Extraction**: Identify the most frequent keywords in your text.
-- **Text Search**: Search for specific queries within your files, with case-sensitive and case-insensitive options.
-- **Cool ASCII Art Welcome**: Because why not?
+- 📊 **File Statistics**: Lines, words, characters, and stanzas count
+- 🔤 **Keyword Extraction**: Find the most frequently used words
+- 🔍 **Interactive Search**: Real-time search with highlighting
+- 📄 **Content Preview**: View file content directly in the terminal
+- 🎨 **Beautiful Interface**: Colorful and intuitive TUI with tabs and navigation
+- ⚡ **Fast & Lightweight**: Built with Rust for optimal performance
 
 ## 🚀 Installation
 
-### easy method
-```
+### From crates.io (Recommended)
+
+```bash
 cargo install flerp
 ```
 
-### if you contribute
-
-1.  **Clone the repository (if you haven't already):**
-    ```bash
-    git clone https://github.com/Huseynteymurzade28/flerp.git
-    cd flerp
-    ```
-2.  **Build and install using Cargo:**
-    Ensure you have Rust and Cargo installed. If not, visit [rustup.rs](https://rustup.rs/).
-    ```bash
-    cargo install --path .
-    ```
-    This will compile `flerp` and place the executable in your Cargo binary directory (usually `~/.cargo/bin/`). Make sure this directory is in your system's `PATH`.
-
-## 🛠️ Usage
-
-Once installed, you can run `flerp` from your terminal:
+### From Source
 
 ```bash
-flerp <query> <filename>
+git clone https://github.com/yourusername/flerp
+cd flerp
+cargo install --path .
 ```
 
-**Arguments:**
+## 📖 Usage
 
-- `<query>`: The text string you want to search for in the file.
-- `<filename>`: The path to the text file you want to analyze.
+### Basic Usage
 
-**Options:**
-
-- **Case-sensitive search (default):**
-  ```bash
-  flerp "Hello" myfile.txt
-  ```
-- **Case-insensitive search:**
-  Set the `CASE_INSENSITIVE` environment variable to any value (e.g., `true` or `1`).
-  ```bash
-  CASE_INSENSITIVE=true flerp "hello" myfile.txt
-  ```
-  Alternatively, on Windows:
-  ```powershell
-  $env:CASE_INSENSITIVE="true"
-  flerp "hello" myfile.txt
-  ```
-  Or for a single command across platforms:
-  ```bash
-  CASE_INSENSITIVE=1 flerp "hello" myfile.txt
-  ```
-
-**Example Output:**
-
-When you run `flerp`, you'll first see a friendly welcome message:
-
-```
-  .--.
- /  _ \
-|  o o |
- \  ^ /
-  `--'
-   ||
-
-    _________________________
-   /                        //
-  /   Flerp Text Analysis  //
- /    Content & Insights  //
-/________________________//
-(________________________(/
-   \                      \
-    \   Keywords, Stats,    \
-     \   Search Results...  \
-      \______________________\
-
+```bash
+# Analyze a text file
+flerp example.txt
 ```
 
-Followed by the analysis:
+### Navigation Controls
 
+- **Tab** - Switch between tabs
+- **/** - Enter search mode
+- **Enter** - Confirm search
+- **Esc** - Exit search mode or quit application
+- **q** - Quit application
+- **c** - Toggle case sensitivity
+- **↑/↓** - Navigate search results
+
+## 🖥️ Interface
+
+Flerp provides four main tabs:
+
+1. **📊 Overview** - File statistics and visual progress bars
+2. **🔤 Keywords** - Most frequently used words
+3. **🔍 Search** - Interactive search with results
+4. **📄 Content** - File content preview
+
+## 🛠️ Development
+
+### Prerequisites
+
+- Rust 1.70.0 or later
+- Cargo
+
+### Building
+
+```bash
+git clone https://github.com/yourusername/flerp
+cd flerp
+cargo build --release
 ```
-Structural Analysis:
-  Lines: 150
-  Words: 2500
-  Stanzas: 30
 
-Keywords (Top 5):
-  rust: 25
-  code: 18
-  analysis: 15
-  text: 12
-  flerp: 10
+### Testing
 
-This is a line that contains your search query.
-Another line matching the query.
-...
+```bash
+cargo test
 ```
+
+## 📦 Dependencies
+
+- `ratatui` - Terminal UI library
+- `crossterm` - Cross-platform terminal manipulation
+- `clap` - Command line argument parsing
 
 ## 🤝 Contributing
 
-Contributions are welcome! If you have ideas for new features, improvements, or bug fixes, please feel free to:
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-1.  Fork the repository.
-2.  Create a new branch (`git checkout -b feature/your-feature-name`).
-3.  Make your changes.
-4.  Commit your changes (`git commit -am 'Add some feature'`).
-5.  Push to the branch (`git push origin feature/your-feature-name`).
-6.  Create a new Pull Request.
+1. Fork the project
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
-## 📜 License
+## 📄 License
 
-This project is licensed under the MIT License - see the `LICENSE` file for details (if you choose to add one).
+This project is licensed under the MIT OR Apache-2.0 License - see the [LICENSE](LICENSE) file for details.
 
----
+## 🙏 Acknowledgments
 
-Happy Flerping! 🎉
+- Built with [Ratatui](https://github.com/ratatui-org/ratatui)
+- Inspired by modern terminal applications
+- Thanks to the Rust community
+
+## 📸 Screenshots
+![Flerp](flerpSS.png)
+
+Made with ❤️ and Rust
+
+Happy flerping 🎉
