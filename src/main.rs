@@ -11,11 +11,12 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Tabs, Wrap},
     Frame, Terminal,
 };
+use std::path::Path;
 use std::{
     collections::HashMap,
     error::Error,
     fs,
-    io::{stdout},
+    io::stdout,
     time::{Duration, Instant},
 };
 
@@ -79,7 +80,13 @@ impl App {
     }
 
     pub fn load_file(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
-        let content = fs::read_to_string(file_path)?;
+        let content = if Path::new(file_path).extension().and_then(|s| s.to_str()) == Some("pdf") {
+            pdf_extract::extract_text(file_path)?
+        } else {
+          
+            fs::read_to_string(file_path)?
+        };
+
         self.state.file_content = content.clone();
         self.state.file_name = file_path.to_string();
         self.state.structural_analysis = analyze_structure(&content);
@@ -87,6 +94,7 @@ impl App {
         self.update_search();
         Ok(())
     }
+    
 
     pub fn update_search(&mut self) {
         if !self.state.search_query.is_empty() {
@@ -226,7 +234,7 @@ fn ui(f: &mut Frame, state: &mut AppState) {
             Constraint::Min(10),   // Content
             Constraint::Length(3), // Footer
         ])
-        .split(f.size());
+        .split(f.area());
 
     // Header
     let header = Paragraph::new(vec![
@@ -509,7 +517,7 @@ fn render_content(f: &mut Frame, area: Rect, state: &AppState) {
 }
 
 fn render_search_input(f: &mut Frame, state: &AppState) {
-    let popup_area = centered_rect(50, 20, f.size());
+    let popup_area = centered_rect(50, 20, f.area());
 
     f.render_widget(Clear, popup_area);
 

@@ -4,6 +4,7 @@ A powerful terminal-based text analysis tool with an interactive user interface 
 
 ## ✨ Features
 
+- 📚 **PDF Analysis**: Also that TUI can use for pdf files
 - 📊 **File Statistics**: Lines, words, characters, and stanzas count
 - 🔤 **Keyword Extraction**: Find the most frequently used words
 - 🔍 **Interactive Search**: Real-time search with highlighting
@@ -103,6 +104,7 @@ This project is licensed under the MIT OR Apache-2.0 License - see the [LICENSE]
 - Thanks to the Rust community
 
 ## 📸 Screenshots
+
 ![Flerp](flerpSS.png)
 
 Made with ❤️ and Rust

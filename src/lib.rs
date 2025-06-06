@@ -25,8 +25,12 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
     println!("      \\______________________\\");
     println!("");
 
-    let contents = fs::read_to_string(config.file_name)?;
-
+    let contents = if config.file_name.ends_with(".pdf") {
+        println!("{}", "Reading pdf file...".bright_blue().bold());
+        pdf_extract::extract_text(&config.file_name)?
+    } else {
+        fs::read_to_string(config.file_name)?
+    };
     let structural_analysis_results = analyze_structure(&contents);
     println!("{}", "Structural Analysis:".cyan().bold());
     println!(
