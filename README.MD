@@ -37,6 +37,21 @@ cargo install --path .
 flerp example.txt
 ```
 
+```bash
+# Version control
+flerp --version
+```
+
+```bash
+# Help and options
+flerp --help
+```
+
+```bash
+# Analyze a PDF file
+flerp example.pdf
+```
+
 ### Navigation Controls
 
 - **Tab** - Switch between tabs
