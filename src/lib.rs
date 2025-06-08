@@ -5,25 +5,7 @@ use std::error::Error;
 use std::fs; // Added for colored output
 
 pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
-    println!("  .--.  ");
-    println!(" /  _ \\ ");
-    println!("|  o o |");
-    println!(" \\  ^ / ");
-    println!("  `--'  ");
-    println!("   ||   ");
-    println!("        ");
-
-    println!("    _________________________");
-    println!("   /                        //");
-    println!("  /   Flerp Text Analysis  //");
-    println!(" /    Content & Insights  //");
-    println!("/________________________//");
-    println!("(________________________(/");
-    println!("   \\                      \\");
-    println!("    \\   Keywords, Stats,    \\");
-    println!("     \\   Search Results...  \\");
-    println!("      \\______________________\\");
-    println!("");
+    
 
     let contents = if config.file_name.ends_with(".pdf") {
         println!("{}", "Reading pdf file...".bright_blue().bold());
