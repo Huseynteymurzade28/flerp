@@ -3,7 +3,7 @@ use ratatui::widgets::ListState;
 
 #[derive(Parser, Debug)]
 #[command(name = "flerp")]
-#[command(version = "0.2.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "A TUI for text analysis and keyword extraction", long_about = None)]
 pub struct Cli {
     #[arg(help = "Path to the file to analyze")]
