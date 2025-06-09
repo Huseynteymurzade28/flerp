@@ -1,7 +1,7 @@
 use crate::app_structs::StructuralAnalysisResults;
 use std::collections::HashMap;
 
-pub fn search<'a>(query: &str, contents: &'a str) -> Vec<String> {
+pub fn search(query: &str, contents: &str) -> Vec<String> {
     contents
         .lines()
         .filter(|line| line.contains(query))
@@ -9,7 +9,7 @@ pub fn search<'a>(query: &str, contents: &'a str) -> Vec<String> {
         .collect()
 }
 
-pub fn search_case_insensitive<'a>(query: &str, contents: &'a str) -> Vec<String> {
+pub fn search_case_insensitive(query: &str, contents: &str) -> Vec<String> {
     let query_lower = query.to_lowercase();
     contents
         .lines()
