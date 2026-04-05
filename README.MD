@@ -1,127 +1,234 @@
-# 🔍 Flerp - Beautiful TUI Text Analysis Tool
+# Flerp
 
-A powerful terminal-based text analysis tool with an interactive user interface built with Rust and Ratatui.
+`flerp` is a terminal UI for exploring and analyzing local files without leaving the command line. It opens text documents in a full-screen `ratatui` workspace and gives you live search, content viewing, file statistics, keyword extraction, repeated-line detection, and adjustable display settings.
 
-## ✨ Features
+It is built in Rust and currently supports plain text files, PDFs, and image metadata previews.
 
-- 📚 **PDF Analysis**: Also that TUI can use for pdf files
-- 📊 **File Statistics**: Lines, words, characters, and stanzas count
-- 🔤 **Keyword Extraction**: Find the most frequently used words
-- 🔍 **Interactive Search**: Real-time search with highlighting
-- 📄 **Content Preview**: View file content directly in the terminal
-- 🎨 **Beautiful Interface**: Colorful and intuitive TUI with tabs and navigation
-- ⚡ **Fast & Lightweight**: Built with Rust for optimal performance
+## What Flerp Does
 
-## 🚀 Installation
+- Opens a file in an interactive terminal workspace
+- Extracts text from PDF files for the same analysis flow used for text files
+- Shows quick structural metrics such as line count, word count, unique words, empty lines, and longest line
+- Finds the most frequent keywords in the loaded content
+- Searches file content with live updates
+- Supports case-sensitive, regex, and whole-word search modes
+- Lets you jump from search results directly into the viewer
+- Highlights repeated lines that appear multiple times
+- Persists UI preferences in an XDG config file
+- Includes multiple built-in color themes
 
-### From crates.io (Recommended)
+## Supported File Types
+
+- `.txt` and other UTF-8 readable text files
+- `.pdf` via text extraction
+- `.png`, `.jpg`, `.jpeg` as metadata summaries
+
+For image files, `flerp` does not render the image in the terminal. It shows file metadata such as name, format, dimensions, and file size instead.
+
+## Interface Overview
+
+The application is organized into five modes:
+
+1. `Dashboard`
+   Quick summary cards, content preview, and the currently selected search match.
+2. `Search`
+   Search results, search options, and regex validation errors.
+3. `Viewer`
+   Scrollable file content view.
+4. `Analyze`
+   Extended analysis panels such as keywords and repeated lines.
+5. `Settings`
+   Theme and behavior settings that are saved automatically.
+
+## Features
+
+### Search
+
+- Live search while typing
+- Case-sensitive toggle
+- Regex search toggle
+- Whole-word matching toggle
+- Match counts per result
+- Jump-to-line from the selected result
+
+### Analysis
+
+- Lines
+- Words
+- Characters
+- Stanzas
+- Empty lines
+- Unique words
+- Longest line
+- Average word length
+- Top keywords
+- Repeated lines
+
+### UI and Workflow
+
+- Full-screen terminal interface
+- Multiple themes
+- Optional line numbers
+- Optional line wrapping
+- Adjustable content preview size
+- Adjustable keyword count
+- Saved preferences between runs
+
+## Installation
+
+### From crates.io
 
 ```bash
 cargo install flerp
 ```
 
-### From Source
+### From source
 
 ```bash
-git clone https://github.com/yourusername/flerp
+git clone https://github.com/Huseynteymurzade28/flerp
 cd flerp
 cargo install --path .
 ```
 
-## 📖 Usage
+## Running
 
-### Basic Usage
+### Open a file
 
 ```bash
-# Analyze a text file
-flerp example.txt
+flerp path/to/file.txt
 ```
 
-```bash
-# Version control
-flerp --version
-```
+### Open a PDF
 
 ```bash
-# Help and options
+flerp path/to/document.pdf
+```
+
+### Open an image metadata view
+
+```bash
+flerp path/to/image.png
+```
+
+### Show help
+
+```bash
 flerp --help
 ```
 
+### Show version
+
 ```bash
-# Analyze a PDF file
-flerp example.pdf
+flerp --version
 ```
 
-### Navigation Controls
+## Terminal Requirement
 
-- **Tab** - Switch between tabs
-- **/** - Enter search mode
-- **Enter** - Confirm search
-- **Esc** - Exit search mode or quit application
-- **q** - Quit application
-- **c** - Toggle case sensitivity
-- **↑/↓** - Navigate search results
+`flerp` requires an interactive terminal session. It will exit with an error if stdin or stdout is not connected to a real terminal.
 
-## 🖥️ Interface
+## Keyboard Controls
 
-Flerp provides four main tabs:
+### Global
 
-1. **📊 Overview** - File statistics and visual progress bars
-2. **🔤 Keywords** - Most frequently used words
-3. **🔍 Search** - Interactive search with results
-4. **📄 Content** - File content preview
+- `q` quit the application
+- `Esc` exit search mode or quit when not searching
+- `Tab` switch between modes
+- `/` enter search mode
 
-## 🛠️ Development
+### Search and Filters
+
+- `Enter` apply the current search or jump to the selected result from the Search tab
+- `Backspace` delete the last search character
+- `c` toggle case-sensitive search
+- `r` toggle regex mode
+- `w` toggle whole-word matching
+
+### Viewer
+
+- `Up` scroll up
+- `Down` scroll down
+- `PageUp` scroll up by one preview window
+- `PageDown` scroll down by one preview window
+- `Home` jump to the top
+- `End` jump to the bottom
+
+### Search Results and Settings
+
+- `Up` and `Down` move through search results
+- `Left` and `Right` adjust the selected setting in the Settings tab
+
+### Display Options
+
+- `l` toggle line numbers
+- `z` toggle line wrapping
+
+## Saved Settings
+
+Flerp stores UI preferences in the XDG config directory using `directories::ProjectDirs`.
+
+Typical Linux path:
+
+```text
+~/.config/flerp/settings.toml
+```
+
+Saved settings include:
+
+- theme
+- keyword limit
+- preview line count
+- case sensitivity
+- regex mode
+- whole-word mode
+- line numbers
+- line wrapping
+
+## Development
 
 ### Prerequisites
 
-- Rust 1.70.0 or later
+- Rust toolchain
 - Cargo
 
-### Building
+### Build
 
 ```bash
-git clone https://github.com/yourusername/flerp
-cd flerp
 cargo build --release
 ```
 
-### Testing
+### Test
 
 ```bash
 cargo test
 ```
 
-## 📦 Dependencies
+### Run from source
 
-- `ratatui` - Terminal UI library
-- `crossterm` - Cross-platform terminal manipulation
-- `clap` - Command line argument parsing
+```bash
+cargo run -- path/to/file.txt
+```
 
-## 🤝 Contributing
+## Tech Stack
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+- `ratatui` for the terminal UI
+- `crossterm` for terminal input/output
+- `clap` for CLI argument parsing
+- `pdf-extract` for PDF text extraction
+- `regex` for advanced searching
+- `serde` and `toml` for persisted settings
+- `directories` for config directory resolution
+- `image` for image metadata support
 
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+## Screenshots
 
-## 📄 License
+![Flerp screenshot 1](flerpSS1.png)
+![Flerp screenshot 2](flerpSS2.png)
 
-This project is licensed under the MIT OR Apache-2.0 License - see the [LICENSE](LICENSE) file for details.
+## Repository
 
-## 🙏 Acknowledgments
+- Homepage: <https://github.com/Huseynteymurzade28/flerp>
+- Repository: <https://github.com/Huseynteymurzade28/flerp>
 
-- Built with [Ratatui](https://github.com/ratatui-org/ratatui)
-- Inspired by modern terminal applications
-- Thanks to the Rust community
+## License
 
-## 📸 Screenshots
-
-![Flerp](flerpSS.png)
-
-Made with ❤️ and Rust
-
-Happy flerping 🎉
+MIT

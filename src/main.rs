@@ -6,7 +6,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::{
     error::Error,
-    io::stdout,
+    io::{stdin, stdout, IsTerminal},
     time::{Duration, Instant},
 };
 
@@ -14,6 +14,7 @@ use std::{
 mod app;
 mod app_structs;
 mod file_utils;
+mod settings;
 mod text_analysis;
 mod ui_components;
 
@@ -24,7 +25,10 @@ use crate::ui_components::ui;
 use clap::Parser; // Keep this as Cli::parse() is used in main
 
 pub fn run_tui(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
-    // Terminal kurulumu
+    if !stdin().is_terminal() || !stdout().is_terminal() {
+        return Err("flerp requires an interactive terminal session".into());
+    }
+
     enable_raw_mode()?;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;

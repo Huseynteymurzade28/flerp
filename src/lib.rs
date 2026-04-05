@@ -36,6 +36,14 @@ pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
         "  Stanzas: {}",
         structural_analysis_results.stanzas.to_string().yellow()
     );
+    println!(
+        "  Unique words: {}",
+        structural_analysis_results.unique_words.to_string().yellow()
+    );
+    println!(
+        "  Empty lines: {}",
+        structural_analysis_results.empty_lines.to_string().yellow()
+    );
 
     let keywords = extract_keywords(&contents, 5);
     println!("\n{}", "Keywords (Top 5):".cyan().bold());
