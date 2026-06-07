@@ -1,9 +1,9 @@
 [package]
 name = "flerp"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["Huseyn"]
-description = "CLI tool that does XYZ"
+description = "A terminal UI for exploring and analyzing text files, PDFs, and images"
 license = "MIT"
 repository = "https://github.com/Huseynteymurzade28/flerp"
 homepage = "https://github.com/Huseynteymurzade28/flerp"
