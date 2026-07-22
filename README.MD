@@ -76,6 +76,18 @@ The application is organized into five modes:
 
 ## Installation
 
+### From AUR
+
+```bash
+yay -S flerp
+```
+
+or the latest development version built from the `master` branch:
+
+```bash
+yay -S flerp-git
+```
+
 ### From crates.io
 
 ```bash
