@@ -1,9 +1,39 @@
+use clap::ValueEnum;
 use image::DynamicImage;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
+
+/// Which terminal graphics protocol to use.
+///
+/// Detection asks the terminal and trusts the answer, but the query is swallowed
+/// by some multiplexers and SSH setups, leaving a capable terminal stuck on
+/// half-blocks. This lets the user say what their terminal can really do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "lower")]
+pub enum GraphicsMode {
+    /// Ask the terminal what it supports.
+    Auto,
+    Kitty,
+    Sixel,
+    Iterm2,
+    /// Coloured character cells; works everywhere, but is an approximation.
+    Halfblocks,
+}
+
+impl GraphicsMode {
+    fn protocol(self) -> Option<ProtocolType> {
+        match self {
+            GraphicsMode::Auto => None,
+            GraphicsMode::Kitty => Some(ProtocolType::Kitty),
+            GraphicsMode::Sixel => Some(ProtocolType::Sixel),
+            GraphicsMode::Iterm2 => Some(ProtocolType::Iterm2),
+            GraphicsMode::Halfblocks => Some(ProtocolType::Halfblocks),
+        }
+    }
+}
 
 /// One renderable image, whatever its origin.
 #[derive(Clone)]
@@ -37,7 +67,15 @@ impl MediaRenderer {
     /// enabled, because the query writes an escape sequence to stdout and reads
     /// the reply.
     pub fn detect() -> Self {
-        match Picker::from_query_stdio() {
+        Self::with_mode(GraphicsMode::Auto)
+    }
+
+    /// Build a renderer, overriding the detected protocol when `mode` names one.
+    ///
+    /// The query still runs even for an override, because it also reports the
+    /// terminal's cell size, which is what image scaling depends on.
+    pub fn with_mode(mode: GraphicsMode) -> Self {
+        let mut renderer = match Picker::from_query_stdio() {
             Ok(picker) => Self {
                 picker: Some(picker),
                 protocol: None,
@@ -47,10 +85,17 @@ impl MediaRenderer {
             // A terminal that will not answer the query can still show
             // half-blocks, which beats showing nothing at all.
             Err(error) => Self {
-                error: Some(format!("graphics protocol query failed: {error}")),
+                error: (mode == GraphicsMode::Auto)
+                    .then(|| format!("graphics protocol query failed: {error}")),
                 ..Self::halfblocks()
             },
+        };
+
+        if let (Some(protocol), Some(picker)) = (mode.protocol(), renderer.picker.as_mut()) {
+            picker.set_protocol_type(protocol);
         }
+
+        renderer
     }
 
     /// Half-block fallback with an assumed cell size, for terminals that cannot

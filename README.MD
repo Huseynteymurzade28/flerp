@@ -4,6 +4,8 @@
 
 It is built in Rust and currently supports plain text files, PDFs, and images. PDFs are read in full — every page of text plus the raster images embedded in them, rendered as real pixels in terminals that support a graphics protocol.
 
+![The Flerp dashboard showing structural metrics and a content preview](assets/dashboard.png)
+
 ## What Flerp Does
 
 - Opens a file in an interactive terminal workspace
@@ -38,7 +40,14 @@ is the image itself rather than character art. It picks the best available of:
 
 When none of these is available, `flerp` falls back to Unicode half-blocks and
 says so in the `Media` mode, so it is always clear whether you are looking at
-true pixels or an approximation.
+true pixels or an approximation. Pass `--graphics kitty` (or `sixel`, `iterm2`,
+`halfblocks`) to override detection, which is useful under multiplexers that
+swallow the capability query.
+
+![The same image drawn with the half-block fallback](assets/media-halfblocks.png)
+
+Above is the fallback; the `Media` section below shows the same image over a
+real graphics protocol.
 
 Images are lifted straight out of the PDF's own data. `DCTDecode` (JPEG) and
 Flate/LZW-compressed raster data are supported across grayscale, RGB, CMYK,
@@ -49,22 +58,45 @@ silently dropped.
 
 ## Interface Overview
 
-The application is organized into six modes:
+The application is organized into six modes, reached with `Tab`.
 
-1. `Dashboard`
-   Quick summary cards, content preview, and the currently selected search match.
-2. `Search`
-   Search results, search options, and regex validation errors.
-3. `Viewer`
-   Scrollable file content view. For PDFs it also reports the current page and
-   how many images sit on it.
-4. `Analyze`
-   Extended analysis panels such as keywords and repeated lines.
-5. `Media`
-   Images found in the file, the renderer in use, and anything that could not be
-   decoded.
-6. `Settings`
-   Theme and behavior settings that are saved automatically.
+### Dashboard
+
+Quick summary cards, a content preview, and the currently selected search match.
+Shown at the top of this page.
+
+### Search
+
+Search results, search options, and regex validation errors. Matches are
+highlighted in place and counted per line.
+
+![Search mode with live highlighting across a PDF](assets/search.png)
+
+### Viewer
+
+Scrollable file content. For PDFs it also reports the current page, the total
+page count, and how many images sit on the page you are reading.
+
+![The Viewer on page 2 of a PDF, with the page indicator and line window](assets/viewer.png)
+
+### Analyze
+
+Extended analysis panels such as top keywords and repeated lines.
+
+![Analyze mode showing structural metrics and top keywords](assets/analyze.png)
+
+### Media
+
+Images found in the file, the renderer in use, and anything that could not be
+decoded.
+
+![An image extracted from a PDF, drawn with the Kitty graphics protocol](assets/media.png)
+
+### Settings
+
+Theme and behavior settings, saved automatically as you change them.
+
+![Settings mode with the theme and behaviour options](assets/settings.png)
 
 ## Features
 
@@ -156,6 +188,17 @@ flerp path/to/document.pdf
 flerp path/to/image.png
 ```
 
+### Force a graphics protocol
+
+Detection is automatic, but a multiplexer or SSH session can swallow the
+capability query. Say what your terminal supports instead:
+
+```bash
+flerp --graphics kitty path/to/document.pdf
+```
+
+Accepts `auto` (the default), `kitty`, `sixel`, `iterm2` and `halfblocks`.
+
 ### Show help
 
 ```bash
@@ -215,6 +258,11 @@ flerp --version
 - `l` toggle line numbers
 - `z` toggle line wrapping
 
+## Screenshots
+
+Every screenshot in this file is generated from flerp's own render buffer, so
+what you see is the interface as the program draws it.
+
 ## Saved Settings
 
 Flerp stores UI preferences in the XDG config directory using `directories::ProjectDirs`.
@@ -273,11 +321,6 @@ cargo run -- path/to/file.txt
 - `serde` and `toml` for persisted settings
 - `directories` for config directory resolution
 - `image` for decoding image data
-
-## Screenshots
-
-![Flerp screenshot 1](flerpSS1.png)
-![Flerp screenshot 2](flerpSS2.png)
 
 ## Repository
 

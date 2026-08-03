@@ -459,6 +459,14 @@ fn render_viewer(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
     state.viewer_height = visible;
 
     let total_lines = state.file_content.lines().count();
+    // Clamp here, where the pane height is known to be current. Anything that
+    // scrolls before the viewer has ever been drawn -- a page jump straight from
+    // another mode, or a terminal that just shrank -- would otherwise be
+    // measured against a stale height.
+    state.content_scroll = state
+        .content_scroll
+        .min(total_lines.saturating_sub(visible));
+
     let first = state.content_scroll + 1;
     let end = (state.content_scroll + visible).min(total_lines).max(first);
 

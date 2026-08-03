@@ -13,10 +13,10 @@ use std::{
 use clap::Parser;
 use flerp::app::App;
 use flerp::app_structs::Cli;
-use flerp::media::MediaRenderer;
+use flerp::media::{GraphicsMode, MediaRenderer};
 use flerp::ui_components::ui;
 
-pub fn run_tui(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
+pub fn run_tui(file_path: Option<&str>, graphics: GraphicsMode) -> Result<(), Box<dyn Error>> {
     if !stdin().is_terminal() || !stdout().is_terminal() {
         return Err("flerp requires an interactive terminal session".into());
     }
@@ -24,7 +24,7 @@ pub fn run_tui(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
     // Probing the terminal for its graphics protocol writes an escape sequence
     // and reads the reply, so it has to happen while stdout is still the plain
     // screen and before raw mode swallows the response.
-    let mut media = MediaRenderer::detect();
+    let mut media = MediaRenderer::with_mode(graphics);
 
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -84,5 +84,5 @@ pub fn run_tui(file_path: Option<&str>) -> Result<(), Box<dyn Error>> {
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse(); // clap::Parser is used here
 
-    run_tui(cli.file.as_deref())
+    run_tui(cli.file.as_deref(), cli.graphics)
 }

@@ -8,6 +8,10 @@ license = "MIT"
 repository = "https://github.com/Huseynteymurzade28/flerp"
 homepage = "https://github.com/Huseynteymurzade28/flerp"
 readme = "README.MD"
+# Screenshots are for the repository page; crates.io resolves the README's
+# relative image links against `repository`, so shipping them would only add
+# weight to the download.
+exclude = ["assets/*"]
 
 
 [dependencies]

@@ -4,7 +4,7 @@ use clap::Parser;
 use ratatui::widgets::ListState;
 use serde::{Deserialize, Serialize};
 
-use crate::media::MediaItem;
+use crate::media::{GraphicsMode, MediaItem};
 use crate::pdf_doc::PdfDocument;
 
 /// Workspace modes, in tab order.
@@ -23,6 +23,14 @@ pub const TAB_SETTINGS: usize = 5;
 pub struct Cli {
     #[arg(help = "Path to the file to analyze")]
     pub file: Option<String>,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = GraphicsMode::Auto,
+        help = "Terminal graphics protocol to use for images"
+    )]
+    pub graphics: GraphicsMode,
 }
 
 #[derive(Debug, Clone)]

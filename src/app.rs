@@ -147,8 +147,10 @@ impl App {
             (current as isize + step).clamp(0, document.pages.len() as isize - 1) as usize
         };
 
+        // Land on the page start verbatim; the viewer clamps to the real pane
+        // height when it draws, which is the only place that height is known.
         let page = &document.pages[target];
-        self.state.content_scroll = page.start_line.min(self.max_content_scroll());
+        self.state.content_scroll = page.start_line;
         self.state.current_tab = TAB_VIEWER;
         self.state.status_message = format!(
             "Page {} of {} · {} lines · {} image(s)",
@@ -187,7 +189,7 @@ impl App {
             return;
         };
 
-        self.state.content_scroll = page.start_line.min(self.max_content_scroll());
+        self.state.content_scroll = page.start_line;
         self.state.current_tab = TAB_VIEWER;
         self.state.status_message = format!("Jumped to page {page_number} for {title}");
     }
