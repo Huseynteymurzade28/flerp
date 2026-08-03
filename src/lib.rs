@@ -3,9 +3,16 @@ use std::env;
 use std::error::Error;
 use std::fs;
 
-// Declare modules that are part of this library crate
-pub mod app_structs; // Assuming app_structs.rs is part of the library
+// The binary is a thin wrapper around this crate, so every module lives here
+// and is compiled exactly once.
+pub mod app;
+pub mod app_structs;
+pub mod file_utils;
+pub mod media;
+pub mod pdf_doc;
+pub mod settings;
 pub mod text_analysis;
+pub mod ui_components;
 
 // Use items from declared modules
 use crate::text_analysis::{analyze_structure, extract_keywords, search, search_case_insensitive};
@@ -14,7 +21,13 @@ use crate::text_analysis::{analyze_structure, extract_keywords, search, search_c
 pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let contents = if config.file_name.ends_with(".pdf") {
         println!("{}", "Reading pdf file...".bright_blue().bold());
-        pdf_extract::extract_text(&config.file_name)?
+        let document = crate::pdf_doc::load(&config.file_name)?;
+        println!(
+            "  {} pages, {} embedded image(s)",
+            document.page_count().to_string().yellow(),
+            document.images.len().to_string().yellow()
+        );
+        document.text
     } else {
         fs::read_to_string(&config.file_name)? // Corrected to pass a reference
     };

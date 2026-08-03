@@ -1,4 +1,7 @@
-use crate::app_structs::{AppState, Theme};
+use crate::app_structs::{
+    AppState, Theme, TAB_ANALYZE, TAB_DASHBOARD, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS, TAB_VIEWER,
+};
+use crate::media::MediaRenderer;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -21,7 +24,7 @@ struct Palette {
     highlight_bg: Color,
 }
 
-pub fn ui(f: &mut Frame, state: &mut AppState) {
+pub fn ui(f: &mut Frame, state: &mut AppState, media: &mut MediaRenderer) {
     let palette = palette(state.theme);
     let area = f.area();
     f.render_widget(Block::default().style(Style::default().bg(palette.background)), area);
@@ -41,11 +44,12 @@ pub fn ui(f: &mut Frame, state: &mut AppState) {
     render_tabs(f, chunks[1], state, &palette);
 
     match state.current_tab {
-        0 => render_dashboard(f, chunks[2], state, &palette),
-        1 => render_search(f, chunks[2], state, &palette),
-        2 => render_viewer(f, chunks[2], state, &palette),
-        3 => render_analysis(f, chunks[2], state, &palette),
-        4 => render_settings(f, chunks[2], state, &palette),
+        TAB_DASHBOARD => render_dashboard(f, chunks[2], state, &palette),
+        TAB_SEARCH => render_search(f, chunks[2], state, &palette),
+        TAB_VIEWER => render_viewer(f, chunks[2], state, &palette),
+        TAB_ANALYZE => render_analysis(f, chunks[2], state, &palette),
+        TAB_MEDIA => render_media(f, chunks[2], state, media, &palette),
+        TAB_SETTINGS => render_settings(f, chunks[2], state, &palette),
         _ => {}
     }
 
@@ -283,7 +287,9 @@ fn render_header(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette)
 }
 
 fn render_tabs(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
-    let tabs = Tabs::new(vec!["Dashboard", "Search", "Viewer", "Analyze", "Settings"])
+    let tabs = Tabs::new(vec![
+        "Dashboard", "Search", "Viewer", "Analyze", "Media", "Settings",
+    ])
         .block(panel_block("Modes", palette.accent_soft, palette))
         .style(Style::default().fg(palette.muted))
         .highlight_style(
@@ -300,9 +306,11 @@ fn render_tabs(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
 fn render_footer(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
     let text = if state.search_mode {
         format!("Type query | Enter apply | Esc cancel | regex {} | whole-word {}", on_off(state.regex_mode), on_off(state.whole_word))
+    } else if state.current_tab == TAB_MEDIA {
+        "q quit | Tab mode | Up/Down pick image | Enter jump to its page".to_string()
     } else {
         format!(
-            "q quit | Tab mode | / search | c case {} | r regex {} | w whole-word {} | l line nums {} | z wrap {}",
+            "q quit | Tab mode | / search | [ ] page | c case {} | r regex {} | w whole-word {} | l line nums {} | z wrap {}",
             on_off(state.case_sensitive),
             on_off(state.regex_mode),
             on_off(state.whole_word),
@@ -345,7 +353,7 @@ fn render_dashboard(f: &mut Frame, area: Rect, state: &AppState, palette: &Palet
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(rows[1]);
 
-    let preview = build_viewer_text(state, palette, 8, true);
+    let preview = build_viewer_text(state, palette, state.preview_line_count, true);
     let viewer = Paragraph::new(preview)
         .wrap(Wrap { trim: false })
         .block(panel_block("Content Preview", palette.accent, palette));
@@ -439,33 +447,226 @@ fn render_search(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
     f.render_widget(detail, cols[1]);
 }
 
-fn render_viewer(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
+fn render_viewer(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Palette) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(4), Constraint::Min(10)])
         .split(area);
 
+    // Fill the pane rather than a fixed line budget, and remember the height so
+    // PageUp/PageDown move by exactly one screenful.
+    let visible = usize::from(rows[1].height.saturating_sub(2)).max(1);
+    state.viewer_height = visible;
+
     let total_lines = state.file_content.lines().count();
-    let end = (state.content_scroll + state.preview_line_count).min(total_lines);
+    let first = state.content_scroll + 1;
+    let end = (state.content_scroll + visible).min(total_lines).max(first);
+
+    let mut position = vec![
+        Span::styled("Lines ", Style::default().fg(palette.muted)),
+        Span::styled(
+            format!("{first}-{end} of {total_lines}"),
+            Style::default().fg(palette.text),
+        ),
+    ];
+    if let Some(document) = &state.document {
+        let index = document.page_of_line(state.content_scroll);
+        let images_here = document
+            .pages
+            .get(index)
+            .map(|page| page.image_count)
+            .unwrap_or(0);
+
+        position.push(Span::styled("   Page ", Style::default().fg(palette.muted)));
+        position.push(Span::styled(
+            format!("{} of {}", index + 1, document.page_count()),
+            Style::default().fg(palette.accent_alt),
+        ));
+        position.push(Span::styled("   Images here ", Style::default().fg(palette.muted)));
+        position.push(Span::styled(
+            images_here.to_string(),
+            Style::default().fg(palette.warning),
+        ));
+    }
+
     let info = Paragraph::new(vec![
-        Line::from(vec![
-            Span::styled("Window ", Style::default().fg(palette.muted)),
-            Span::styled(format!("{}-{} of {}", state.content_scroll.saturating_add(1), end.max(state.content_scroll.saturating_add(1)), total_lines), Style::default().fg(palette.text)),
-        ]),
+        Line::from(position),
         Line::from(vec![
             Span::styled("Line numbers ", Style::default().fg(palette.muted)),
             Span::styled(on_off(state.line_numbers), Style::default().fg(palette.text)),
             Span::styled("   Wrap ", Style::default().fg(palette.muted)),
             Span::styled(on_off(state.wrap_lines), Style::default().fg(palette.text)),
+            Span::styled("   [ ] page step", Style::default().fg(palette.muted)),
         ]),
     ])
     .block(panel_block("Viewer", palette.accent, palette));
     f.render_widget(info, rows[0]);
 
-    let viewer = Paragraph::new(build_viewer_text(state, palette, state.preview_line_count, false))
-        .wrap(Wrap { trim: false })
-        .block(panel_block("Content", palette.accent_soft, palette));
+    let content = build_viewer_text(state, palette, visible, false);
+    let mut viewer =
+        Paragraph::new(content).block(panel_block("Content", palette.accent_soft, palette));
+    // Wrapping reflows long lines onto extra rows, which would push the tail of
+    // the window off-screen; only apply it when the user asked for it.
+    if state.wrap_lines {
+        viewer = viewer.wrap(Wrap { trim: false });
+    }
     f.render_widget(viewer, rows[1]);
+}
+
+fn render_media(
+    f: &mut Frame,
+    area: Rect,
+    state: &mut AppState,
+    media: &mut MediaRenderer,
+    palette: &Palette,
+) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(32), Constraint::Percentage(68)])
+        .split(area);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(6), Constraint::Length(5)])
+        .split(columns[0]);
+
+    let items: Vec<ListItem> = if state.media.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "No images in this file",
+            Style::default().fg(palette.muted),
+        )))]
+    } else {
+        state
+            .media
+            .iter()
+            .enumerate()
+            .map(|(index, item)| {
+                let selected = index == state.selected_media;
+                let marker = if selected { "▸ " } else { "  " };
+                ListItem::new(vec![
+                    Line::from(Span::styled(
+                        format!("{marker}{}", item.title),
+                        Style::default()
+                            .fg(if selected { palette.accent_alt } else { palette.text })
+                            .add_modifier(if selected {
+                                Modifier::BOLD
+                            } else {
+                                Modifier::empty()
+                            }),
+                    )),
+                    Line::from(Span::styled(
+                        format!("  {}", item.detail),
+                        Style::default().fg(palette.muted),
+                    )),
+                ])
+            })
+            .collect()
+    };
+
+    let list = List::new(items).block(panel_block("Images", palette.accent, palette));
+    f.render_widget(list, rows[0]);
+
+    let mut status = vec![Line::from(vec![
+        Span::styled("Renderer ", Style::default().fg(palette.muted)),
+        Span::styled(
+            media.backend_label(),
+            Style::default().fg(if media.is_pixel_perfect() {
+                palette.success
+            } else {
+                palette.warning
+            }),
+        ),
+    ])];
+    status.push(Line::from(Span::styled(
+        if media.is_pixel_perfect() {
+            "True pixel output."
+        } else {
+            "Terminal lacks a graphics protocol; showing an approximation."
+        },
+        Style::default().fg(palette.muted),
+    )));
+    if let Some(document) = &state.document {
+        if !document.skipped.is_empty() {
+            status.push(Line::from(Span::styled(
+                format!("{} image(s) skipped", document.skipped.len()),
+                Style::default().fg(palette.danger),
+            )));
+        }
+    }
+    if let Some(error) = media.error() {
+        status.push(Line::from(Span::styled(
+            error.to_string(),
+            Style::default().fg(palette.danger),
+        )));
+    }
+
+    f.render_widget(
+        Paragraph::new(status)
+            .wrap(Wrap { trim: true })
+            .block(panel_block("Output", palette.accent_soft, palette)),
+        rows[1],
+    );
+
+    let title = state
+        .selected_media_item()
+        .map(|item| item.title.clone())
+        .unwrap_or_else(|| "Preview".to_string());
+    let frame_block = panel_block("Preview", palette.accent_soft, palette).title(Span::styled(
+        format!(" {title} "),
+        Style::default().fg(palette.accent_alt),
+    ));
+    let inner = frame_block.inner(columns[1]);
+    f.render_widget(frame_block, columns[1]);
+
+    match state.selected_media_item() {
+        Some(item) => {
+            media.select(item);
+            if !media.render(f, inner) {
+                f.render_widget(
+                    Paragraph::new(placeholder_text(state, media, palette))
+                        .wrap(Wrap { trim: true }),
+                    inner,
+                );
+            }
+        }
+        None => {
+            media.clear();
+            f.render_widget(
+                Paragraph::new(placeholder_text(state, media, palette)).wrap(Wrap { trim: true }),
+                inner,
+            );
+        }
+    }
+}
+
+fn placeholder_text(state: &AppState, media: &MediaRenderer, palette: &Palette) -> Text<'static> {
+    let mut lines = Vec::new();
+
+    if let Some(error) = media.error() {
+        lines.push(Line::from(Span::styled(
+            format!("Image output unavailable: {error}"),
+            Style::default().fg(palette.danger),
+        )));
+    } else if state.media.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "This file has no embedded images to show.",
+            Style::default().fg(palette.muted),
+        )));
+    }
+
+    if let Some(document) = &state.document {
+        for skipped in document.skipped.iter().take(12) {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "Page {} · {}x{} · {}",
+                    skipped.page, skipped.width, skipped.height, skipped.reason
+                ),
+                Style::default().fg(palette.warning),
+            )));
+        }
+    }
+
+    Text::from(lines)
 }
 
 fn render_analysis(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {

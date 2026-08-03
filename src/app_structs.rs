@@ -1,6 +1,20 @@
+use std::sync::Arc;
+
 use clap::Parser;
 use ratatui::widgets::ListState;
 use serde::{Deserialize, Serialize};
+
+use crate::media::MediaItem;
+use crate::pdf_doc::PdfDocument;
+
+/// Workspace modes, in tab order.
+pub const TAB_COUNT: usize = 6;
+pub const TAB_DASHBOARD: usize = 0;
+pub const TAB_SEARCH: usize = 1;
+pub const TAB_VIEWER: usize = 2;
+pub const TAB_ANALYZE: usize = 3;
+pub const TAB_MEDIA: usize = 4;
+pub const TAB_SETTINGS: usize = 5;
 
 #[derive(Parser, Debug)]
 #[command(name = "flerp")]
@@ -125,6 +139,14 @@ pub struct AppState {
     pub preview_line_count: usize,
     pub content_scroll: usize,
     pub status_message: String,
+    /// Page structure, present only for PDFs.
+    pub document: Option<Arc<PdfDocument>>,
+    /// Images extracted from the loaded file, in page order.
+    pub media: Vec<MediaItem>,
+    pub selected_media: usize,
+    /// Rows the viewer actually has room for, measured during the last draw.
+    /// Paging keys use this so a page step matches what is on screen.
+    pub viewer_height: usize,
 }
 
 impl Default for AppState {
@@ -162,6 +184,23 @@ impl Default for AppState {
             preview_line_count: 50,
             content_scroll: 0,
             status_message: "Open a file to start searching, viewing, and analyzing text.".to_string(),
+            document: None,
+            media: Vec::new(),
+            selected_media: 0,
+            viewer_height: 50,
         }
+    }
+}
+
+impl AppState {
+    /// 1-based page number under the top of the viewer, when the file has pages.
+    pub fn current_page(&self) -> Option<usize> {
+        let document = self.document.as_ref()?;
+        let index = document.page_of_line(self.content_scroll);
+        document.pages.get(index).map(|page| page.number)
+    }
+
+    pub fn selected_media_item(&self) -> Option<&MediaItem> {
+        self.media.get(self.selected_media)
     }
 }

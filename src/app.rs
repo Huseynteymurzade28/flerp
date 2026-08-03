@@ -2,8 +2,8 @@ use crossterm::event::KeyCode;
 use std::error::Error;
 use std::time::Instant;
 
-use crate::app_structs::AppState;
-use crate::file_utils::read_file_content;
+use crate::app_structs::{AppState, TAB_COUNT, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS, TAB_VIEWER};
+use crate::file_utils::load_file;
 use crate::settings::AppSettings;
 use crate::text_analysis::{
     analyze_structure, extract_keywords, extract_repeated_lines, search_with_options, SearchOptions,
@@ -26,14 +26,31 @@ impl App {
     }
 
     pub fn load_file(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
-        let content = read_file_content(file_path)?;
+        let loaded = load_file(file_path)?;
 
-        self.state.file_content = content;
+        self.state.file_content = loaded.content;
         self.state.file_name = file_path.to_string();
+        self.state.document = loaded.document;
+        self.state.media = loaded.media;
+        self.state.selected_media = 0;
         self.refresh_analysis();
         self.state.content_scroll = 0;
         self.update_search();
-        self.state.status_message = format!("Loaded {}", self.state.file_name);
+
+        let summary = match &self.state.document {
+            Some(document) => format!(
+                "Loaded {} · {} pages · {} images",
+                self.state.file_name,
+                document.page_count(),
+                self.state.media.len()
+            ),
+            None => format!("Loaded {}", self.state.file_name),
+        };
+        self.state.status_message = match loaded.notice {
+            Some(notice) => format!("{summary} · {notice}"),
+            None => summary,
+        };
+
         Ok(())
     }
 
@@ -104,7 +121,75 @@ impl App {
             .file_content
             .lines()
             .count()
-            .saturating_sub(self.state.preview_line_count)
+            .saturating_sub(self.state.viewer_height)
+    }
+
+    /// Move the viewer by whole PDF pages. `step` is in pages, not lines.
+    fn jump_page(&mut self, step: isize) {
+        let Some(document) = self.state.document.clone() else {
+            self.state.status_message = "Page jumps need a paged document such as a PDF.".to_string();
+            return;
+        };
+        if document.pages.is_empty() {
+            return;
+        }
+
+        let current = document.page_of_line(self.state.content_scroll);
+        // Stepping back from mid-page returns to the top of the current page
+        // first, which is what a reader expects from a "previous page" key.
+        let at_page_start = document
+            .pages
+            .get(current)
+            .is_some_and(|page| page.start_line == self.state.content_scroll);
+        let target = if step < 0 && !at_page_start {
+            current
+        } else {
+            (current as isize + step).clamp(0, document.pages.len() as isize - 1) as usize
+        };
+
+        let page = &document.pages[target];
+        self.state.content_scroll = page.start_line.min(self.max_content_scroll());
+        self.state.current_tab = TAB_VIEWER;
+        self.state.status_message = format!(
+            "Page {} of {} · {} lines · {} image(s)",
+            page.number,
+            document.pages.len(),
+            page.line_count,
+            page.image_count
+        );
+    }
+
+    fn select_media(&mut self, step: isize) {
+        if self.state.media.is_empty() {
+            return;
+        }
+        let last = self.state.media.len() as isize - 1;
+        let next = (self.state.selected_media as isize + step).clamp(0, last) as usize;
+        self.state.selected_media = next;
+    }
+
+    /// Jump the viewer to the page holding the selected image.
+    fn jump_to_media_page(&mut self) {
+        let Some(document) = self.state.document.clone() else {
+            return;
+        };
+        let Some(item) = self.state.media.get(self.state.selected_media) else {
+            return;
+        };
+        let (title, Some(page_number)) = (item.title.clone(), item.page) else {
+            return;
+        };
+        let Some(page) = document
+            .pages
+            .iter()
+            .find(|page| page.number == page_number)
+        else {
+            return;
+        };
+
+        self.state.content_scroll = page.start_line.min(self.max_content_scroll());
+        self.state.current_tab = TAB_VIEWER;
+        self.state.status_message = format!("Jumped to page {page_number} for {title}");
     }
 
     fn scroll_content(&mut self, delta: isize) {
@@ -117,11 +202,17 @@ impl App {
         if let Some(selected) = self.state.search_results.get(self.state.selected_result) {
             let target = selected.line_number.saturating_sub(3);
             self.state.content_scroll = target.min(self.max_content_scroll());
-            self.state.current_tab = 2;
-            self.state.status_message = format!(
-                "Jumped to line {} from search results.",
-                selected.line_number
-            );
+            self.state.current_tab = TAB_VIEWER;
+            self.state.status_message = match self.state.current_page() {
+                Some(page) => format!(
+                    "Jumped to line {} (page {page}) from search results.",
+                    selected.line_number
+                ),
+                None => format!(
+                    "Jumped to line {} from search results.",
+                    selected.line_number
+                ),
+            };
         }
     }
 
@@ -166,11 +257,13 @@ impl App {
             }
             KeyCode::Char('/') if !self.state.search_mode => {
                 self.state.search_mode = true;
-                self.state.current_tab = 1;
+                self.state.current_tab = TAB_SEARCH;
             }
             KeyCode::Tab if !self.state.search_mode => {
-                self.state.current_tab = (self.state.current_tab + 1) % 5;
+                self.state.current_tab = (self.state.current_tab + 1) % TAB_COUNT;
             }
+            KeyCode::Char('[') if !self.state.search_mode => self.jump_page(-1),
+            KeyCode::Char(']') if !self.state.search_mode => self.jump_page(1),
             KeyCode::Char('c') if !self.state.search_mode => {
                 self.state.case_sensitive = !self.state.case_sensitive;
                 self.update_search();
@@ -198,8 +291,11 @@ impl App {
                 self.state.search_mode = false;
                 self.update_search();
             }
-            KeyCode::Enter if !self.state.search_mode && self.state.current_tab == 1 => {
+            KeyCode::Enter if !self.state.search_mode && self.state.current_tab == TAB_SEARCH => {
                 self.jump_to_selected_result();
+            }
+            KeyCode::Enter if !self.state.search_mode && self.state.current_tab == TAB_MEDIA => {
+                self.jump_to_media_page();
             }
             KeyCode::Backspace if self.state.search_mode => {
                 self.state.search_query.pop();
@@ -209,7 +305,7 @@ impl App {
                 self.state.search_query.push(c);
                 self.update_search();
             }
-            KeyCode::Up if !self.state.search_mode && self.state.current_tab == 1 => {
+            KeyCode::Up if !self.state.search_mode && self.state.current_tab == TAB_SEARCH => {
                 if !self.state.search_results.is_empty() {
                     self.state.selected_result = self.state.selected_result.saturating_sub(1);
                     self.state
@@ -217,7 +313,7 @@ impl App {
                         .select(Some(self.state.selected_result));
                 }
             }
-            KeyCode::Down if !self.state.search_mode && self.state.current_tab == 1 => {
+            KeyCode::Down if !self.state.search_mode && self.state.current_tab == TAB_SEARCH => {
                 if !self.state.search_results.is_empty() {
                     self.state.selected_result = (self.state.selected_result + 1)
                         .min(self.state.search_results.len().saturating_sub(1));
@@ -226,34 +322,40 @@ impl App {
                         .select(Some(self.state.selected_result));
                 }
             }
-            KeyCode::Up if !self.state.search_mode && self.state.current_tab == 2 => {
+            KeyCode::Up if !self.state.search_mode && self.state.current_tab == TAB_VIEWER => {
                 self.scroll_content(-1);
             }
-            KeyCode::Down if !self.state.search_mode && self.state.current_tab == 2 => {
+            KeyCode::Down if !self.state.search_mode && self.state.current_tab == TAB_VIEWER => {
                 self.scroll_content(1);
             }
-            KeyCode::PageUp if !self.state.search_mode && self.state.current_tab == 2 => {
-                self.scroll_content(-(self.state.preview_line_count as isize));
+            KeyCode::PageUp if !self.state.search_mode && self.state.current_tab == TAB_VIEWER => {
+                self.scroll_content(-(self.state.viewer_height as isize));
             }
-            KeyCode::PageDown if !self.state.search_mode && self.state.current_tab == 2 => {
-                self.scroll_content(self.state.preview_line_count as isize);
+            KeyCode::PageDown if !self.state.search_mode && self.state.current_tab == TAB_VIEWER => {
+                self.scroll_content(self.state.viewer_height as isize);
             }
-            KeyCode::Home if !self.state.search_mode && self.state.current_tab == 2 => {
+            KeyCode::Home if !self.state.search_mode && self.state.current_tab == TAB_VIEWER => {
                 self.state.content_scroll = 0;
             }
-            KeyCode::End if !self.state.search_mode && self.state.current_tab == 2 => {
+            KeyCode::End if !self.state.search_mode && self.state.current_tab == TAB_VIEWER => {
                 self.state.content_scroll = self.max_content_scroll();
             }
-            KeyCode::Up if !self.state.search_mode && self.state.current_tab == 4 => {
+            KeyCode::Up if !self.state.search_mode && self.state.current_tab == TAB_MEDIA => {
+                self.select_media(-1);
+            }
+            KeyCode::Down if !self.state.search_mode && self.state.current_tab == TAB_MEDIA => {
+                self.select_media(1);
+            }
+            KeyCode::Up if !self.state.search_mode && self.state.current_tab == TAB_SETTINGS => {
                 self.update_settings_selection(-1);
             }
-            KeyCode::Down if !self.state.search_mode && self.state.current_tab == 4 => {
+            KeyCode::Down if !self.state.search_mode && self.state.current_tab == TAB_SETTINGS => {
                 self.update_settings_selection(1);
             }
-            KeyCode::Left if !self.state.search_mode && self.state.current_tab == 4 => {
+            KeyCode::Left if !self.state.search_mode && self.state.current_tab == TAB_SETTINGS => {
                 self.adjust_setting(false);
             }
-            KeyCode::Right if !self.state.search_mode && self.state.current_tab == 4 => {
+            KeyCode::Right if !self.state.search_mode && self.state.current_tab == TAB_SETTINGS => {
                 self.adjust_setting(true);
             }
             _ => {}
