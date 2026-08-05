@@ -311,7 +311,7 @@ cargo run -- path/to/file.txt
 
 ## Tech Stack
 
-- `ratatui` for the terminal UI
+- `ratatui` for the terminal UI (TUI)
 - `crossterm` for terminal input/output
 - `clap` for CLI argument parsing
 - `pdf-extract` for PDF text extraction
