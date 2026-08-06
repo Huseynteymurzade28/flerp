@@ -89,7 +89,8 @@ fn dispatch(event: Event, app: &mut App) -> bool {
     match event {
         // Key releases and repeats arrive on some platforms; acting on them
         // would double every keystroke.
-        Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key.code),
+        Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key_event(key),
+        Event::Mouse(mouse) => app.handle_mouse(mouse),
         _ => true,
     }
 }

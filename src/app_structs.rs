@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use serde::{Deserialize, Serialize};
 
@@ -194,6 +195,35 @@ pub struct SearchMatch {
     pub match_count: usize,
 }
 
+/// What the next keystroke means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    /// Keys are commands.
+    Normal,
+    /// Keys go into the search query.
+    Search,
+    /// Keys go into the line-number prompt opened with `:`.
+    Goto,
+}
+
+/// Where things ended up on screen during the last draw.
+///
+/// Mouse events arrive as absolute terminal coordinates and know nothing about
+/// the layout, so the only way to say what was clicked is to record the regions
+/// while drawing them. Everything here is stale by one frame at worst, which is
+/// the same frame the user was looking at when they clicked.
+#[derive(Debug, Clone, Default)]
+pub struct HitRegions {
+    /// Horizontal span of each tab label, in tab order, plus the row they sit on.
+    pub tabs: Vec<(u16, u16)>,
+    pub tab_row: u16,
+    /// Text area of the viewer, excluding its border.
+    pub viewer: Rect,
+    pub search_results: Rect,
+    pub media_list: Rect,
+    pub settings_list: Rect,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub file_content: String,
@@ -205,7 +235,9 @@ pub struct AppState {
     pub repeated_lines: Vec<(String, usize)>,
     pub structural_analysis: StructuralAnalysisResults,
     pub current_tab: usize,
-    pub search_mode: bool,
+    pub input_mode: InputMode,
+    /// Digits typed at the `:` prompt, before they become a line number.
+    pub goto_buffer: String,
     pub case_sensitive: bool,
     pub regex_mode: bool,
     pub whole_word: bool,
@@ -227,6 +259,8 @@ pub struct AppState {
     /// Rows the viewer actually has room for, measured during the last draw.
     /// Paging keys use this so a page step matches what is on screen.
     pub viewer_height: usize,
+    /// Clickable regions, measured during the last draw.
+    pub hit: HitRegions,
 }
 
 impl Default for AppState {
@@ -250,7 +284,8 @@ impl Default for AppState {
                 average_word_length: 0.0,
             },
             current_tab: 0,
-            search_mode: false,
+            input_mode: InputMode::Normal,
+            goto_buffer: String::new(),
             case_sensitive: true,
             regex_mode: false,
             whole_word: false,
@@ -268,11 +303,28 @@ impl Default for AppState {
             media: Vec::new(),
             selected_media: 0,
             viewer_height: 50,
+            hit: HitRegions::default(),
         }
     }
 }
 
 impl AppState {
+    /// True while the search query is being typed.
+    pub fn search_mode(&self) -> bool {
+        self.input_mode == InputMode::Search
+    }
+
+    /// True while keystrokes are going into a prompt rather than acting as
+    /// commands. Every command key is gated on this.
+    pub fn is_typing(&self) -> bool {
+        self.input_mode != InputMode::Normal
+    }
+
+    /// Modes whose main pane is the scrollable file content.
+    pub fn shows_content(&self) -> bool {
+        self.current_tab == TAB_VIEWER || self.current_tab == TAB_DASHBOARD
+    }
+
     /// 1-based page number under the top of the viewer, when the file has pages.
     pub fn current_page(&self) -> Option<usize> {
         let document = self.document.as_ref()?;

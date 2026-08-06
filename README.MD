@@ -282,46 +282,71 @@ requirement — that is the point of it.
 
 ## Keyboard Controls
 
+The footer always shows the keys for whatever mode you are in, dropping the
+less important ones when the terminal is too narrow to hold them all.
+
 ### Global
 
-- `q` quit the application
-- `Esc` exit search mode or quit when not searching
-- `Tab` switch between modes
-- `/` enter search mode
+- `q` or `Ctrl-c` quit the application
+- `Esc` cancel the open prompt, or quit when no prompt is open
+- `Tab` next mode, `Shift-Tab` previous mode
+- `/` open the search prompt
+- `:` open the go-to-line prompt; digits only, `Enter` jumps
 
 ### Search and Filters
 
 - `Enter` apply the current search or jump to the selected result from the Search tab
 - `Backspace` delete the last search character
+- `n` next match, `N` previous match — both follow the match into the viewer and
+  wrap around at the ends
 - `c` toggle case-sensitive search
 - `r` toggle regex mode
 - `w` toggle whole-word matching
 
-### Viewer
+### Viewer and Dashboard Preview
 
-- `Up` scroll up
-- `Down` scroll down
-- `PageUp` scroll up by one screenful
-- `PageDown` scroll down by one screenful
-- `Home` jump to the top
-- `End` jump to the bottom
-- `[` previous page (paged documents)
-- `]` next page (paged documents)
+Both read the same scroll offset, so these work in either mode.
+
+- `j` / `Down` scroll down, `k` / `Up` scroll up
+- `Ctrl-d` and `Ctrl-u` move by half a screen
+- `Ctrl-f` / `PageDown` and `Ctrl-b` / `PageUp` move by a whole screen
+- `g` / `Home` jump to the top, `G` / `End` jump to the bottom
+- `[` previous page, `]` next page (paged documents)
+
+`h` and `l` are not bound to left and right: `l` toggles line numbers, and half
+of a symmetric pair would be worse than neither.
 
 ### Media
 
-- `Up` and `Down` move through the images in the file
+- `j` / `k` (or `Up` / `Down`) move through the images in the file
 - `Enter` jump the viewer to the page the selected image sits on
 
 ### Search Results and Settings
 
-- `Up` and `Down` move through search results
+- `j` / `k` (or `Up` / `Down`) move through search results and settings rows
 - `Left` and `Right` adjust the selected setting in the Settings tab
 
 ### Display Options
 
 - `l` toggle line numbers
 - `z` toggle line wrapping
+
+## Mouse
+
+- **Wheel** scrolls whatever is under the pointer: the file content, the match
+  list, the image list or the settings rows
+- **Click a mode** in the tab strip to switch to it
+- **Click a row** in the match list, image list or settings list to select it
+- Clicks are ignored while a prompt is open, since the prompt covers the panes
+  behind it
+
+## Scroll Position
+
+The Viewer draws a scrollbar on the right edge of the content pane, with every
+search match marked on its track. On a long document that turns "where are my
+matches" from a scrolling exercise into a glance. Marks never paint over the
+thumb, so where you are looking stays visible, and a file that already fits on
+screen gets no scrollbar at all.
 
 ## Screenshots
 

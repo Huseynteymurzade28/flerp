@@ -1,12 +1,16 @@
 use crate::app_structs::{
-    AppState, Theme, TAB_ANALYZE, TAB_DASHBOARD, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS, TAB_VIEWER,
+    AppState, InputMode, Theme, TAB_ANALYZE, TAB_DASHBOARD, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS,
+    TAB_VIEWER,
 };
 use crate::media::MediaRenderer;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Tabs, Wrap,
+    },
     Frame,
 };
 
@@ -40,6 +44,14 @@ pub fn ui(f: &mut Frame, state: &mut AppState, media: &mut MediaRenderer) {
         ])
         .split(area);
 
+    // Only the mode about to be drawn should own clickable regions. Without
+    // this, leaving a mode would leave its panes catching clicks and wheel
+    // events aimed at whatever replaced them.
+    state.hit.viewer = Rect::ZERO;
+    state.hit.search_results = Rect::ZERO;
+    state.hit.media_list = Rect::ZERO;
+    state.hit.settings_list = Rect::ZERO;
+
     render_header(f, chunks[0], state, &palette);
     render_tabs(f, chunks[1], state, &palette);
 
@@ -55,8 +67,10 @@ pub fn ui(f: &mut Frame, state: &mut AppState, media: &mut MediaRenderer) {
 
     render_footer(f, chunks[3], state, &palette);
 
-    if state.search_mode {
-        render_search_input(f, state, &palette);
+    match state.input_mode {
+        InputMode::Search => render_search_input(f, state, &palette),
+        InputMode::Goto => render_goto_input(f, state, &palette),
+        InputMode::Normal => {}
     }
 }
 
@@ -286,11 +300,21 @@ fn render_header(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette)
     f.render_widget(header, area);
 }
 
-fn render_tabs(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
-    let tabs = Tabs::new(vec![
-        "Dashboard", "Search", "Viewer", "Analyze", "Media", "Settings",
-    ])
-        .block(panel_block("Modes", palette.accent_soft, palette))
+const TAB_LABELS: [&str; 6] = [
+    "Dashboard", "Search", "Viewer", "Analyze", "Media", "Settings",
+];
+
+/// Padding `Tabs` puts on each side of a label, and the width of the divider
+/// between two of them. Both are fixed by how the widget is configured below.
+const TAB_PADDING: u16 = 1;
+const TAB_DIVIDER: u16 = 3;
+
+fn render_tabs(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Palette) {
+    let block = panel_block("Modes", palette.accent_soft, palette);
+    let inner = block.inner(area);
+
+    let tabs = Tabs::new(TAB_LABELS.to_vec())
+        .block(block)
         .style(Style::default().fg(palette.muted))
         .highlight_style(
             Style::default()
@@ -301,30 +325,87 @@ fn render_tabs(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
         .select(state.current_tab);
 
     f.render_widget(tabs, area);
+
+    // Walk the same layout the widget just drew, so a click can be turned back
+    // into a tab index. Measuring here rather than guessing keeps the hitboxes
+    // honest even when a label changes.
+    state.hit.tab_row = inner.y;
+    state.hit.tabs = TAB_LABELS
+        .iter()
+        .scan(inner.x, |cursor, label| {
+            let width = label.chars().count() as u16 + TAB_PADDING * 2;
+            let start = *cursor;
+            *cursor = start + width + TAB_DIVIDER;
+            // Clip to the pane: a narrow terminal truncates the strip, and a
+            // hitbox past the right edge would catch clicks on nothing.
+            Some((start.min(inner.right()), (start + width).min(inner.right())))
+        })
+        .collect();
 }
 
 fn render_footer(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
-    let text = if state.search_mode {
-        format!("Type query | Enter apply | Esc cancel | regex {} | whole-word {}", on_off(state.regex_mode), on_off(state.whole_word))
-    } else if state.current_tab == TAB_MEDIA {
-        "q quit | Tab mode | Up/Down pick image | Enter jump to its page".to_string()
-    } else {
-        format!(
-            "q quit | Tab mode | / search | [ ] page | c case {} | r regex {} | w whole-word {} | l line nums {} | z wrap {}",
-            on_off(state.case_sensitive),
-            on_off(state.regex_mode),
-            on_off(state.whole_word),
-            on_off(state.line_numbers),
-            on_off(state.wrap_lines)
-        )
+    // Ordered by how much a reader needs them, because a narrow terminal only
+    // gets the ones that fit. A hint clipped mid-word helps nobody.
+    let hints: Vec<String> = match state.input_mode {
+        InputMode::Search => vec![
+            "Type query".into(),
+            "Enter apply".into(),
+            "Esc cancel".into(),
+            format!("regex {}", on_off(state.regex_mode)),
+            format!("whole-word {}", on_off(state.whole_word)),
+        ],
+        InputMode::Goto => vec![
+            "Type a line number".into(),
+            "Enter jump".into(),
+            "Esc cancel".into(),
+        ],
+        InputMode::Normal if state.current_tab == TAB_MEDIA => vec![
+            "q quit".into(),
+            "Tab mode".into(),
+            "j/k or click pick image".into(),
+            "Enter jump to its page".into(),
+        ],
+        InputMode::Normal => vec![
+            "q quit".into(),
+            "Tab mode".into(),
+            "/ search".into(),
+            "n/N match".into(),
+            ": line".into(),
+            "[ ] page".into(),
+            "j/k g/G ^d/^u scroll".into(),
+            format!("c case {}", on_off(state.case_sensitive)),
+            format!("r regex {}", on_off(state.regex_mode)),
+            format!("w whole-word {}", on_off(state.whole_word)),
+            format!("l line nums {}", on_off(state.line_numbers)),
+            format!("z wrap {}", on_off(state.wrap_lines)),
+        ],
     };
 
-    let footer = Paragraph::new(text)
+    let footer = Paragraph::new(fit_hints(&hints, area.width.saturating_sub(2)))
         .style(Style::default().fg(palette.text))
         .alignment(Alignment::Center)
         .block(panel_block("Controls", palette.accent_soft, palette));
 
     f.render_widget(footer, area);
+}
+
+/// Join as many hints as `width` can hold, dropping whole ones from the end.
+fn fit_hints(hints: &[String], width: u16) -> String {
+    const SEPARATOR: &str = " | ";
+
+    let mut line = String::new();
+    for hint in hints {
+        let extra = hint.chars().count() + if line.is_empty() { 0 } else { SEPARATOR.len() };
+        if line.chars().count() + extra > width as usize {
+            break;
+        }
+        if !line.is_empty() {
+            line.push_str(SEPARATOR);
+        }
+        line.push_str(hint);
+    }
+
+    line
 }
 
 fn render_dashboard(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
@@ -428,8 +509,11 @@ fn render_search(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
                 .collect()
         };
 
+        let block = panel_block("Matches", palette.success, palette);
+        state.hit.search_results = block.inner(cols[0]);
+
         let list = List::new(items)
-            .block(panel_block("Matches", palette.success, palette))
+            .block(block)
             .highlight_style(
                 Style::default()
                     .fg(palette.accent_alt)
@@ -510,16 +594,83 @@ fn render_viewer(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
     .block(panel_block("Viewer", palette.accent, palette));
     f.render_widget(info, rows[0]);
 
+    let block = panel_block("Content", palette.accent_soft, palette);
+    state.hit.viewer = block.inner(rows[1]);
+
     let content = build_viewer_text(state, palette, visible, false);
-    let mut viewer =
-        Paragraph::new(content).block(panel_block("Content", palette.accent_soft, palette));
+    let mut viewer = Paragraph::new(content).block(block);
     // Wrapping reflows long lines onto extra rows, which would push the tail of
     // the window off-screen; only apply it when the user asked for it.
     if state.wrap_lines {
         viewer = viewer.wrap(Wrap { trim: false });
     }
     f.render_widget(viewer, rows[1]);
+
+    render_content_scrollbar(f, rows[1], state, palette, total_lines, visible);
 }
+
+/// Draw the viewer's position indicator, with the search matches marked on its
+/// track.
+///
+/// The marks are the point: a scrollbar alone says where you are, but a long
+/// document with a handful of matches also needs to say where they are, and
+/// scrolling to find out is exactly the work this saves.
+fn render_content_scrollbar(
+    f: &mut Frame,
+    area: Rect,
+    state: &AppState,
+    palette: &Palette,
+    total_lines: usize,
+    visible: usize,
+) {
+    // The track sits on the block's right border, between its corners.
+    let track = area.inner(Margin {
+        vertical: 1,
+        horizontal: 0,
+    });
+    if track.height == 0 || total_lines <= visible {
+        return;
+    }
+
+    let mut scrollbar_state = ScrollbarState::new(total_lines)
+        .viewport_content_length(visible)
+        .position(state.content_scroll);
+
+    f.render_stateful_widget(
+        Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_style(Style::default().fg(palette.muted))
+            .thumb_style(Style::default().fg(palette.accent)),
+        track,
+        &mut scrollbar_state,
+    );
+
+    if state.search_results.is_empty() {
+        return;
+    }
+
+    // Paint over track cells only. The thumb says where the user is looking,
+    // which stays more useful than a mark that happens to fall under it.
+    let column = track.right().saturating_sub(1);
+    let buffer = f.buffer_mut();
+    for entry in &state.search_results {
+        let line = entry.line_number.saturating_sub(1);
+        let row = track.y + (line * track.height as usize / total_lines.max(1)) as u16;
+        if row >= track.bottom() {
+            continue;
+        }
+
+        let cell = &mut buffer[(column, row)];
+        if cell.symbol() != THUMB_SYMBOL {
+            cell.set_symbol("▪");
+            cell.set_fg(palette.warning);
+        }
+    }
+}
+
+/// What `Scrollbar` paints for the thumb, so match marks can avoid it.
+const THUMB_SYMBOL: &str = "█";
 
 fn render_media(
     f: &mut Frame,
@@ -571,8 +722,9 @@ fn render_media(
             .collect()
     };
 
-    let list = List::new(items).block(panel_block("Images", palette.accent, palette));
-    f.render_widget(list, rows[0]);
+    let block = panel_block("Images", palette.accent, palette);
+    state.hit.media_list = block.inner(rows[0]);
+    f.render_widget(List::new(items).block(block), rows[0]);
 
     let mut status = vec![Line::from(vec![
         Span::styled("Renderer ", Style::default().fg(palette.muted)),
@@ -739,7 +891,7 @@ fn render_analysis(f: &mut Frame, area: Rect, state: &AppState, palette: &Palett
     f.render_widget(keywords, cols[1]);
 }
 
-fn render_settings(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
+fn render_settings(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Palette) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -776,8 +928,9 @@ fn render_settings(f: &mut Frame, area: Rect, state: &AppState, palette: &Palett
         })
         .collect();
 
-    let list = List::new(items).block(panel_block("Settings", palette.accent_soft, palette));
-    f.render_widget(list, cols[0]);
+    let block = panel_block("Settings", palette.accent_soft, palette);
+    state.hit.settings_list = block.inner(cols[0]);
+    f.render_widget(List::new(items).block(block), cols[0]);
 
     let theme_lines: Vec<Line> = Theme::ALL
         .iter()
@@ -816,6 +969,31 @@ fn render_search_input(f: &mut Frame, state: &AppState, palette: &Palette) {
     .alignment(Alignment::Left)
     .style(Style::default().fg(palette.text).bg(palette.surface))
     .block(panel_block("Search Query", palette.accent, palette));
+
+    f.render_widget(input, popup_area);
+}
+
+fn render_goto_input(f: &mut Frame, state: &AppState, palette: &Palette) {
+    let popup_area = centered_rect(46, 18, f.area());
+    f.render_widget(Clear, popup_area);
+
+    let total = state.file_content.lines().count();
+    let input = Paragraph::new(vec![
+        Line::from(vec![
+            Span::styled("Line ", Style::default().fg(palette.muted)),
+            Span::styled(
+                format!("{}_", state.goto_buffer),
+                Style::default().fg(palette.text),
+            ),
+        ]),
+        Line::from(Span::styled(
+            format!("1-{total}   Enter jump   Esc cancel"),
+            Style::default().fg(palette.muted),
+        )),
+    ])
+    .alignment(Alignment::Left)
+    .style(Style::default().fg(palette.text).bg(palette.surface))
+    .block(panel_block("Go To Line", palette.accent, palette));
 
     f.render_widget(input, popup_area);
 }
