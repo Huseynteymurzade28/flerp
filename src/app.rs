@@ -10,7 +10,7 @@ use crate::file_utils::load_file;
 use crate::pdf_doc::PdfDocument;
 use crate::settings::AppSettings;
 use crate::text_analysis::{
-    analyze_structure, extract_keywords, extract_repeated_lines, search_with_options, SearchOptions,
+    analyze_content, analyze_structure, extract_repeated_lines, search_with_options, SearchOptions,
 };
 
 /// Lines one wheel notch moves the content. Three is the common terminal step;
@@ -67,7 +67,12 @@ impl App {
 
     fn refresh_analysis(&mut self) {
         self.state.structural_analysis = analyze_structure(&self.state.file_content);
-        self.state.keywords = extract_keywords(&self.state.file_content, self.state.keyword_limit);
+
+        let content = analyze_content(&self.state.file_content, self.state.keyword_limit);
+        self.state.keywords = content.keywords;
+        self.state.phrases = content.phrases;
+        self.state.readability = content.readability;
+
         self.state.repeated_lines = extract_repeated_lines(&self.state.file_content, 8);
         self.state.content_scroll = self.state.content_scroll.min(self.max_content_scroll());
     }

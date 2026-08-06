@@ -81,7 +81,8 @@ page count, and how many images sit on the page you are reading.
 
 ### Analyze
 
-Extended analysis panels such as top keywords and repeated lines.
+Structural metrics and repeated lines on the left; readability, weighted
+keywords and repeated phrases on the right.
 
 ![Analyze mode showing structural metrics and top keywords](assets/analyze.png)
 
@@ -111,16 +112,50 @@ Theme and behavior settings, saved automatically as you change them.
 
 ### Analysis
 
-- Lines
-- Words
-- Characters
-- Stanzas
-- Empty lines
-- Unique words
-- Longest line
-- Average word length
-- Top keywords
+Structural counts:
+
+- Lines, words, characters, stanzas, empty lines
+- Unique words, longest line, average word length
 - Repeated lines
+
+Content analysis:
+
+- **Top keywords**, weighted rather than merely counted (see below)
+- **Repeated phrases**, the multi-word runs the text keeps coming back to
+- **Readability**, as a LIX score with its band, sentence count and average
+  sentence length
+- **Detected language**, English or Turkish, or undetermined when neither is
+  clear
+
+#### How Keywords Are Ranked
+
+Ranking words by raw frequency describes the language, not the document: `the`,
+`and`, `of` win every English file and `bir`, `ve`, `için` win every Turkish
+one. `flerp` filters those out with English and Turkish stopword lists, then
+weights what is left by tf-idf.
+
+There is no corpus to draw an idf from, so the document supplies its own: each
+paragraph counts as a separate document, falling back to lines for files with
+no blank lines. A word spread evenly through every paragraph is scaffolding and
+scores low however often it repeats; a word that clusters in a few is what those
+paragraphs are about and scores high. The panel shows the count and the weight
+side by side, so you can see when the two disagree.
+
+Phrases come from the same stopword lists: a phrase is a run of content words
+with no stopword or punctuation breaking it, which is the RAKE approach and
+needs no grammar. A phrase is only reported if it occurs more than once, and a
+short phrase is dropped when a longer one already accounts for every occurrence
+of it — listing both "harbour extension" and "harbour extension works" at the
+same count says the same thing twice.
+
+Both stopword lists always apply, whatever language was detected. Documents mix
+languages constantly, and filtering by the detected language alone lets the
+other one's function words to the top. Detection reports what the text is; it
+does not decide what gets filtered, so a wrong guess costs nothing.
+
+LIX is used for readability rather than Flesch because it needs no syllable
+counting, which only works for English. Sentences are counted by their
+terminators, so abbreviations inflate the count slightly.
 
 ### Paged Documents
 
@@ -230,13 +265,16 @@ Passing any of `--json`, `--text` or `--extract-images` skips the TUI entirely.
 flerp --json report.pdf
 ```
 
-One object on stdout: structural stats, keywords, repeated lines, the page
-table, every embedded image with its dimensions, and any images that could not
-be decoded along with the reason.
+One object on stdout: structural stats, the detected language, readability,
+weighted keywords, repeated phrases, repeated lines, the page table, every
+embedded image with its dimensions, and any images that could not be decoded
+along with the reason.
 
 ```bash
 flerp --json report.pdf | jq '.pages | length'
-flerp --json report.pdf | jq -r '.keywords[] | "\(.count)\t\(.word)"'
+flerp --json report.pdf | jq -r '.keywords[] | "\(.score)\t\(.word)"'
+flerp --json report.pdf | jq -r '.phrases[] | "\(.count)\t\(.text)"'
+flerp --json report.pdf | jq '.readability.lix'
 ```
 
 ### Plain text

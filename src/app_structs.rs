@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::media::{GraphicsMode, MediaItem};
 use crate::pdf_doc::PdfDocument;
-use crate::text_analysis::SearchOptions;
+use crate::text_analysis::{Keyword, Phrase, Readability, SearchOptions};
 
 /// Workspace modes, in tab order.
 pub const TAB_COUNT: usize = 6;
@@ -231,7 +231,9 @@ pub struct AppState {
     pub search_query: String,
     pub search_results: Vec<SearchMatch>,
     pub search_error: Option<String>,
-    pub keywords: Vec<(String, usize)>,
+    pub keywords: Vec<Keyword>,
+    pub phrases: Vec<Phrase>,
+    pub readability: Readability,
     pub repeated_lines: Vec<(String, usize)>,
     pub structural_analysis: StructuralAnalysisResults,
     pub current_tab: usize,
@@ -272,6 +274,8 @@ impl Default for AppState {
             search_results: Vec::new(),
             search_error: None,
             keywords: Vec::new(),
+            phrases: Vec::new(),
+            readability: Readability::default(),
             repeated_lines: Vec::new(),
             structural_analysis: StructuralAnalysisResults {
                 lines: 0,

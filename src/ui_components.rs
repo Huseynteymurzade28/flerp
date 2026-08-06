@@ -871,24 +871,143 @@ fn render_analysis(f: &mut Frame, area: Rect, state: &AppState, palette: &Palett
     let repeated = List::new(repeated_items).block(panel_block("Repeated Lines", palette.warning, palette));
     f.render_widget(repeated, left[1]);
 
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(7),
+            Constraint::Percentage(50),
+            Constraint::Min(6),
+        ])
+        .split(cols[1]);
+
+    render_readability(f, right[0], state, palette);
+
     let keyword_items: Vec<ListItem> = if state.keywords.is_empty() {
-        vec![ListItem::new(Line::from("No keywords available."))]
+        vec![ListItem::new(Line::from(Span::styled(
+            "No keywords available.",
+            Style::default().fg(palette.muted),
+        )))]
     } else {
         state
             .keywords
             .iter()
             .enumerate()
-            .map(|(index, (keyword, count))| {
+            .map(|(index, keyword)| {
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{:02}. ", index + 1), Style::default().fg(palette.muted)),
-                    Span::styled(format!("{:<18}", keyword), Style::default().fg(palette.accent_alt).add_modifier(Modifier::BOLD)),
-                    Span::styled(count.to_string(), Style::default().fg(palette.warning)),
+                    Span::styled(
+                        format!("{:02}. ", index + 1),
+                        Style::default().fg(palette.muted),
+                    ),
+                    Span::styled(
+                        format!("{:<18}", keyword.word),
+                        Style::default()
+                            .fg(palette.accent_alt)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{:>4}", keyword.count),
+                        Style::default().fg(palette.warning),
+                    ),
+                    // The weight is what separates this from a frequency count,
+                    // so it belongs on screen next to the count it reorders.
+                    Span::styled(
+                        format!("  {:>6.1}", keyword.score),
+                        Style::default().fg(palette.muted),
+                    ),
                 ]))
             })
             .collect()
     };
-    let keywords = List::new(keyword_items).block(panel_block("Top Keywords", palette.success, palette));
-    f.render_widget(keywords, cols[1]);
+    f.render_widget(
+        List::new(keyword_items).block(panel_block(
+            "Top Keywords  (count / weight)",
+            palette.success,
+            palette,
+        )),
+        right[1],
+    );
+
+    let phrase_items: Vec<ListItem> = if state.phrases.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "No phrase repeats itself in this text.",
+            Style::default().fg(palette.muted),
+        )))]
+    } else {
+        state
+            .phrases
+            .iter()
+            .map(|phrase| {
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("x{:>2} ", phrase.count),
+                        Style::default().fg(palette.warning),
+                    ),
+                    Span::styled(phrase.text.as_str(), Style::default().fg(palette.text)),
+                ]))
+            })
+            .collect()
+    };
+    f.render_widget(
+        List::new(phrase_items).block(panel_block("Repeated Phrases", palette.accent_soft, palette)),
+        right[2],
+    );
+}
+
+fn render_readability(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
+    let readability = &state.readability;
+    let band_color = match readability.lix {
+        _ if readability.sentences == 0 => palette.muted,
+        value if value < 35.0 => palette.success,
+        value if value < 45.0 => palette.accent_alt,
+        value if value < 55.0 => palette.warning,
+        _ => palette.danger,
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("Language  ", Style::default().fg(palette.muted)),
+            Span::styled(
+                readability.language.label(),
+                Style::default().fg(palette.accent),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("LIX       ", Style::default().fg(palette.muted)),
+            Span::styled(
+                format!("{:.1}", readability.lix),
+                Style::default().fg(band_color).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  {}", readability.band),
+                Style::default().fg(band_color),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Sentences ", Style::default().fg(palette.muted)),
+            Span::styled(
+                readability.sentences.to_string(),
+                Style::default().fg(palette.text),
+            ),
+            Span::styled("   words each ", Style::default().fg(palette.muted)),
+            Span::styled(
+                format!("{:.1}", readability.words_per_sentence),
+                Style::default().fg(palette.text),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Long words ", Style::default().fg(palette.muted)),
+            Span::styled(
+                format!("{:.0}%", readability.long_word_share * 100.0),
+                Style::default().fg(palette.text),
+            ),
+            Span::styled(" of the text", Style::default().fg(palette.muted)),
+        ]),
+    ];
+
+    f.render_widget(
+        Paragraph::new(lines).block(panel_block("Readability", palette.warning, palette)),
+        area,
+    );
 }
 
 fn render_settings(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Palette) {

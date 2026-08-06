@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use crate::file_utils::{load_file, LoadedFile};
 use crate::media::MediaItem;
 use crate::text_analysis::{
-    analyze_structure, extract_keywords, extract_repeated_lines, search_with_options, SearchOptions,
+    analyze_content, analyze_structure, extract_repeated_lines, search_with_options, SearchOptions,
 };
 
 /// One non-interactive invocation, assembled from the CLI flags.
@@ -133,10 +133,7 @@ fn analysis_json(
     written: &[WrittenImage],
 ) -> Result<Value, Box<dyn Error>> {
     let structure = analyze_structure(&loaded.content);
-    let keywords: Vec<Value> = extract_keywords(&loaded.content, request.keyword_limit)
-        .into_iter()
-        .map(|(word, count)| json!({ "word": word, "count": count }))
-        .collect();
+    let content = analyze_content(&loaded.content, request.keyword_limit);
     let repeated: Vec<Value> = extract_repeated_lines(&loaded.content, 8)
         .into_iter()
         .map(|(line, count)| json!({ "line": line, "count": count }))
@@ -145,8 +142,11 @@ fn analysis_json(
     let mut document = json!({
         "file": request.file,
         "kind": kind(loaded),
+        "language": content.language,
         "stats": structure,
-        "keywords": keywords,
+        "readability": content.readability,
+        "keywords": content.keywords,
+        "phrases": content.phrases,
         "repeated_lines": repeated,
     });
 

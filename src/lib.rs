@@ -7,5 +7,6 @@ pub mod headless;
 pub mod media;
 pub mod pdf_doc;
 pub mod settings;
+pub mod stopwords;
 pub mod text_analysis;
 pub mod ui_components;
