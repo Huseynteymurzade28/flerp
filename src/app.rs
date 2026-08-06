@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::app_structs::{AppState, TAB_COUNT, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS, TAB_VIEWER};
 use crate::file_utils::load_file;
+use crate::pdf_doc::PdfDocument;
 use crate::settings::AppSettings;
 use crate::text_analysis::{
     analyze_structure, extract_keywords, extract_repeated_lines, search_with_options, SearchOptions,
@@ -147,9 +148,40 @@ impl App {
             (current as isize + step).clamp(0, document.pages.len() as isize - 1) as usize
         };
 
+        self.show_page(&document, target);
+    }
+
+    /// Move the viewer to a 1-based page number, as `--page` does.
+    pub fn goto_page(&mut self, number: usize) {
+        let Some(document) = self.state.document.clone() else {
+            self.state.status_message =
+                "Page jumps need a paged document such as a PDF.".to_string();
+            return;
+        };
+
+        let Some(index) = document
+            .pages
+            .iter()
+            .position(|page| page.number == number)
+        else {
+            self.state.status_message = format!(
+                "Page {number} is outside this document's {} page(s).",
+                document.page_count()
+            );
+            return;
+        };
+
+        self.show_page(&document, index);
+    }
+
+    /// Park the viewer at the top of `pages[index]` and report where it landed.
+    fn show_page(&mut self, document: &PdfDocument, index: usize) {
+        let Some(page) = document.pages.get(index) else {
+            return;
+        };
+
         // Land on the page start verbatim; the viewer clamps to the real pane
         // height when it draws, which is the only place that height is known.
-        let page = &document.pages[target];
         self.state.content_scroll = page.start_line;
         self.state.current_tab = TAB_VIEWER;
         self.state.status_message = format!(
@@ -159,6 +191,13 @@ impl App {
             page.line_count,
             page.image_count
         );
+    }
+
+    /// Seed the search box from outside the event loop, as `--search` does.
+    pub fn set_search_query(&mut self, query: &str) {
+        self.state.search_query = query.to_string();
+        self.update_search();
+        self.state.current_tab = TAB_SEARCH;
     }
 
     fn select_media(&mut self, step: isize) {

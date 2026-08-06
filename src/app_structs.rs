@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
@@ -6,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::media::{GraphicsMode, MediaItem};
 use crate::pdf_doc::PdfDocument;
+use crate::text_analysis::SearchOptions;
 
 /// Workspace modes, in tab order.
 pub const TAB_COUNT: usize = 6;
@@ -31,9 +33,79 @@ pub struct Cli {
         help = "Terminal graphics protocol to use for images"
     )]
     pub graphics: GraphicsMode,
+
+    #[arg(
+        long,
+        conflicts_with = "text",
+        help = "Print the analysis as JSON and exit instead of starting the TUI"
+    )]
+    pub json: bool,
+
+    #[arg(
+        long,
+        help = "Print the file's extracted plain text and exit instead of starting the TUI"
+    )]
+    pub text: bool,
+
+    #[arg(
+        long,
+        value_name = "DIR",
+        help = "Write every embedded image to DIR as PNG and exit"
+    )]
+    pub extract_images: Option<PathBuf>,
+
+    #[arg(
+        short,
+        long,
+        value_name = "QUERY",
+        help = "Search query: printed as matches in headless mode, pre-filled in the TUI otherwise"
+    )]
+    pub search: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "N",
+        help = "Open the viewer on this page (paged documents only)"
+    )]
+    pub page: Option<usize>,
+
+    #[arg(short = 'i', long, help = "Match the search query case-insensitively")]
+    pub ignore_case: bool,
+
+    #[arg(short = 'e', long, help = "Treat the search query as a regular expression")]
+    pub regex: bool,
+
+    #[arg(short = 'w', long, help = "Match the search query on whole words only")]
+    pub word: bool,
+
+    #[arg(
+        long,
+        value_name = "N",
+        default_value_t = 10,
+        help = "How many keywords the headless analysis reports"
+    )]
+    pub keywords: usize,
 }
 
-#[derive(Debug, Clone)]
+impl Cli {
+    /// True when the flags ask for output rather than a terminal session.
+    ///
+    /// `--search` alone is not enough: on its own it seeds the TUI's search box,
+    /// and only turns into printed matches alongside one of these.
+    pub fn is_headless(&self) -> bool {
+        self.json || self.text || self.extract_images.is_some()
+    }
+
+    pub fn search_options(&self) -> SearchOptions {
+        SearchOptions {
+            case_sensitive: !self.ignore_case,
+            regex_mode: self.regex,
+            whole_word: self.word,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct StructuralAnalysisResults {
     pub lines: usize,
     pub words: usize,

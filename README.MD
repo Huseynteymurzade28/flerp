@@ -199,6 +199,13 @@ flerp --graphics kitty path/to/document.pdf
 
 Accepts `auto` (the default), `kitty`, `sixel`, `iterm2` and `halfblocks`.
 
+### Start somewhere other than the top
+
+```bash
+flerp --page 12 report.pdf          # open the viewer on page 12
+flerp --search "invoice" report.pdf # open with the search already applied
+```
+
 ### Show help
 
 ```bash
@@ -211,9 +218,67 @@ flerp --help
 flerp --version
 ```
 
+## Headless Mode
+
+Everything `flerp` works out about a file can be written to stdout or to disk
+instead of drawn in a terminal, so it composes with the rest of your shell.
+Passing any of `--json`, `--text` or `--extract-images` skips the TUI entirely.
+
+### Analysis as JSON
+
+```bash
+flerp --json report.pdf
+```
+
+One object on stdout: structural stats, keywords, repeated lines, the page
+table, every embedded image with its dimensions, and any images that could not
+be decoded along with the reason.
+
+```bash
+flerp --json report.pdf | jq '.pages | length'
+flerp --json report.pdf | jq -r '.keywords[] | "\(.count)\t\(.word)"'
+```
+
+### Plain text
+
+```bash
+flerp --text report.pdf > report.txt
+```
+
+Writes the extracted text verbatim — every page of a PDF, in page order.
+Closing the pipe early (`| head`) is treated as the reader having had enough,
+not as an error.
+
+### Extracting embedded images
+
+```bash
+flerp --extract-images ./out report.pdf
+```
+
+Writes each embedded image as PNG into `./out`, named `page-003-img-02.png` so
+the files sort into reading order. PNG keeps the alpha that `/SMask`
+transparency produces. Combine with `--json` and the written paths are reported
+inside the JSON object rather than beside it, so stdout stays parseable.
+
+### Searching without the TUI
+
+```bash
+flerp --search "revenue" --json report.pdf   # matches with page numbers
+flerp --search "revenue" --text report.pdf   # no: --text and --json conflict
+flerp --search "revenue" --extract-images ./out report.pdf
+```
+
+With `--json`, matches carry their line number, page number and per-line match
+count. Without it, matches print grep-style as `file:line:text`. The search
+modifiers work headlessly too: `-i` ignore case, `-e` regex, `-w` whole word.
+Unlike the TUI, headless search never reads your saved settings, so a script
+gets the same result on any machine.
+
 ## Terminal Requirement
 
-`flerp` requires an interactive terminal session. It will exit with an error if stdin or stdout is not connected to a real terminal.
+The TUI requires an interactive terminal session and will exit with an error if
+stdin or stdout is not connected to a real terminal. Headless mode has no such
+requirement — that is the point of it.
 
 ## Keyboard Controls
 
