@@ -58,7 +58,7 @@ silently dropped.
 
 ## Interface Overview
 
-The application is organized into six modes, reached with `Tab`.
+The application is organized into various modes, reached with `Tab`.
 
 ### Dashboard
 
