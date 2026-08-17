@@ -85,6 +85,13 @@ carries the total of everything inside it, so you can see where the matches are
 before opening anything. Picking a file out of a swept tree lands the viewer on
 its first match.
 
+![The Files pane after a sweep, with match counts on every row and the chosen file open on its first match](assets/files.png)
+
+The same thing as it happens — folding the tree open, sweeping it for a word, and
+dropping into the file that has the most of them:
+
+![Opening folders, searching the whole tree, and landing on a match](assets/files.gif)
+
 ### Dashboard
 
 Quick summary cards, a content preview, and the currently selected search match.
