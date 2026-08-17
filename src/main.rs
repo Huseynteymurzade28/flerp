@@ -32,19 +32,20 @@ pub fn run_tui(cli: &Cli, graphics: GraphicsMode) -> Result<(), Box<dyn Error>> 
     // screen and before raw mode swallows the response.
     let mut media = MediaRenderer::with_mode(graphics);
 
-    enable_raw_mode()?;
-    let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
     let mut app_instance = App::new();
 
-    // Dosya yükleme
-    if let Some(path) = cli.paths.first() {
-        if let Err(e) = app_instance.load_file(path) {
-            eprintln!("Error loading file: {}", e);
-            // Consider how to handle this error: maybe exit or continue without a file
+    // Everything the command line asks for is done before the alternate screen
+    // is entered, so a bad path is reported on the ordinary terminal rather than
+    // flashed onto a screen that is about to be torn down.
+    //
+    // A directory becomes the tree pane and loads nothing; anything else is the
+    // single file the session opens on.
+    match cli.browser_root() {
+        Some(root) => app_instance.open_directory(&root)?,
+        None => {
+            if let Some(path) = cli.paths.first() {
+                app_instance.load_file(path)?;
+            }
         }
     }
 
@@ -55,6 +56,12 @@ pub fn run_tui(cli: &Cli, graphics: GraphicsMode) -> Result<(), Box<dyn Error>> 
     if let Some(page) = cli.page {
         app_instance.goto_page(page);
     }
+
+    enable_raw_mode()?;
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
     let tick_rate = Duration::from_millis(250);
     let mut last_tick_poll = Instant::now();

@@ -11,8 +11,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::file_utils::{collect_searchable, load_file, load_for_search, LoadedFile};
+use crate::file_utils::{load_file, LoadedFile};
 use crate::media::MediaItem;
+use crate::sweep::{self, Plan, Results};
 use crate::text_analysis::{
     analyze_content, analyze_structure, extract_repeated_lines, search_with_options, SearchOptions,
 };
@@ -37,31 +38,8 @@ enum Target {
     /// One named file, reported in full: the shape flerp has always emitted.
     One(String),
     /// A directory, or several paths. Only searching makes sense across these,
-    /// so the sweep carries the file list rather than a loaded document.
-    Sweep(Sweep),
-}
-
-struct Sweep {
-    /// What the user asked for, echoed back so the JSON records the scope.
-    roots: Vec<String>,
-    files: Vec<PathBuf>,
-    /// Directories the walk could not read, with the reason.
-    unreadable: Vec<(PathBuf, String)>,
-}
-
-/// One line that matched, with the page it sits on for paged documents.
-struct Hit {
-    line_number: usize,
-    page: Option<usize>,
-    match_count: usize,
-    line: String,
-}
-
-/// The matches found in one file during a sweep.
-struct FileHits {
-    file: String,
-    kind: &'static str,
-    hits: Vec<Hit>,
+    /// so the plan carries the file list rather than a loaded document.
+    Sweep(Plan),
 }
 
 /// An image written to disk, reported back so the caller can say what it did.
@@ -75,11 +53,15 @@ struct WrittenImage {
 pub fn run(request: &HeadlessRequest, out: &mut impl Write) -> Result<(), Box<dyn Error>> {
     match resolve(&request.targets)? {
         Target::One(file) => run_one(request, &file, out),
-        Target::Sweep(sweep) => run_sweep(request, &sweep, out),
+        Target::Sweep(plan) => run_sweep(request, &plan, out),
     }
 }
 
 /// Work out whether the command line named one file or a set of them.
+///
+/// One named file is the long-standing shape of the command, and it reports far
+/// more than a search: naming a single file keeps that, and everything else is
+/// a sweep.
 fn resolve(targets: &[String]) -> Result<Target, Box<dyn Error>> {
     if targets.is_empty() {
         return Err("no file or directory was named".into());
@@ -91,33 +73,7 @@ fn resolve(targets: &[String]) -> Result<Target, Box<dyn Error>> {
         }
     }
 
-    let mut files = Vec::new();
-    let mut unreadable = Vec::new();
-
-    for target in targets {
-        let path = Path::new(target);
-        if path.is_dir() {
-            let found = collect_searchable(path)?;
-            files.extend(found.files);
-            unreadable.extend(found.unreadable);
-        } else {
-            // A path typed out by hand is searched whether or not the walk's own
-            // filter would have picked it up. Naming a file is the user saying
-            // they want that file.
-            files.push(path.to_path_buf());
-        }
-    }
-
-    // Overlapping targets — `flerp docs docs/report.pdf` — would otherwise
-    // report the same matches twice.
-    files.sort();
-    files.dedup();
-
-    Ok(Target::Sweep(Sweep {
-        roots: targets.to_vec(),
-        files,
-        unreadable,
-    }))
+    Ok(Target::Sweep(sweep::plan(targets)?))
 }
 
 fn run_one(
@@ -186,7 +142,7 @@ fn run_one(
 /// output modes say so rather than picking a file arbitrarily.
 fn run_sweep(
     request: &HeadlessRequest,
-    sweep: &Sweep,
+    plan: &Plan,
     out: &mut impl Write,
 ) -> Result<(), Box<dyn Error>> {
     if request.text {
@@ -202,108 +158,60 @@ fn run_sweep(
         );
     };
 
-    // Check the query before opening anything. A bad regex is the user's
-    // mistake rather than any one file's, and reporting it only once a file
-    // happens to be reached would let it pass unnoticed over an empty directory.
-    search_with_options(query, "", request.search_options)
+    let results = sweep::search(plan, query, request.search_options)
         .map_err(|error| -> Box<dyn Error> { error.into() })?;
-
-    let mut matched: Vec<FileHits> = Vec::new();
-    let mut skipped: Vec<(PathBuf, String)> = sweep.unreadable.clone();
-
-    for path in &sweep.files {
-        let Some(name) = path.to_str() else {
-            skipped.push((path.clone(), "path is not valid UTF-8".to_string()));
-            continue;
-        };
-
-        let loaded = match load_for_search(name) {
-            Ok(loaded) => loaded,
-            Err(error) => {
-                skipped.push((path.clone(), error.to_string()));
-                continue;
-            }
-        };
-
-        let found = search_with_options(query, &loaded.content, request.search_options)
-            .map_err(|error| -> Box<dyn Error> { error.into() })?;
-        if found.is_empty() {
-            continue;
-        }
-
-        // Page numbers are resolved here, while the document is still loaded, so
-        // nothing PDF-sized — least of all its decoded images — has to stay in
-        // memory for the rest of the sweep.
-        let hits = found
-            .into_iter()
-            .map(|entry| Hit {
-                page: page_of(&loaded, entry.line_number),
-                line_number: entry.line_number,
-                match_count: entry.match_count,
-                line: entry.line,
-            })
-            .collect();
-
-        matched.push(FileHits {
-            file: name.to_string(),
-            kind: kind(&loaded),
-            hits,
-        });
-    }
 
     if request.json {
         writeln!(
             out,
             "{}",
-            serde_json::to_string_pretty(&sweep_json(request, sweep, query, &matched, &skipped))?
+            serde_json::to_string_pretty(&sweep_json(request, plan, &results))?
         )?;
         return Ok(());
     }
 
-    for file in &matched {
+    for file in &results.files {
         for hit in &file.hits {
-            writeln!(out, "{}:{}:{}", file.file, hit.line_number, hit.line)?;
+            writeln!(
+                out,
+                "{}:{}:{}",
+                file.file.display(),
+                hit.line_number,
+                hit.line
+            )?;
         }
     }
 
     // Stdout stays grep-parseable, so what could not be read goes to stderr
     // rather than into the middle of the match lines.
-    for (path, reason) in &skipped {
+    for (path, reason) in &results.skipped {
         eprintln!("flerp: skipped {}: {reason}", path.display());
     }
 
     Ok(())
 }
 
-fn sweep_json(
-    request: &HeadlessRequest,
-    sweep: &Sweep,
-    query: &str,
-    matched: &[FileHits],
-    skipped: &[(PathBuf, String)],
-) -> Value {
+fn sweep_json(request: &HeadlessRequest, plan: &Plan, results: &Results) -> Value {
     json!({
         "search": {
-            "query": query,
+            "query": results.query,
             "case_sensitive": request.search_options.case_sensitive,
             "regex": request.search_options.regex_mode,
             "whole_word": request.search_options.whole_word,
         },
-        "roots": sweep.roots,
-        "files_searched": sweep.files.len(),
-        "files_matched": matched.len(),
-        "match_count": matched
-            .iter()
-            .flat_map(|file| file.hits.iter())
-            .map(|hit| hit.match_count)
-            .sum::<usize>(),
-        "files": matched
+        "roots": plan.roots,
+        "files_searched": results.files_searched,
+        "files_matched": results.files.len(),
+        "match_count": results.match_count(),
+        "files": results
+            .files
             .iter()
             .map(|file| {
                 json!({
                     "file": file.file,
-                    "kind": file.kind,
-                    "match_count": file.hits.iter().map(|hit| hit.match_count).sum::<usize>(),
+                    "kind": file.role.label(),
+                    "page_count": file.page_count,
+                    "match_count": file.match_count(),
                     "matches": file
                         .hits
                         .iter()
@@ -319,19 +227,12 @@ fn sweep_json(
                 })
             })
             .collect::<Vec<Value>>(),
-        "skipped": skipped
+        "skipped": results
+            .skipped
             .iter()
             .map(|(path, reason)| json!({ "path": path, "reason": reason }))
             .collect::<Vec<Value>>(),
     })
-}
-
-/// The 1-based page a 1-based line falls on, when the file has pages at all.
-fn page_of(loaded: &LoadedFile, line_number: usize) -> Option<usize> {
-    let pdf = loaded.document.as_ref()?;
-    // Line numbers are 1-based; page lookup is not.
-    let index = pdf.page_of_line(line_number.saturating_sub(1));
-    pdf.pages.get(index).map(|page| page.number)
 }
 
 fn write_images(
@@ -479,6 +380,17 @@ fn analysis_json(
     }
 
     Ok(document)
+}
+
+/// The 1-based page a 1-based line falls on, when the file has pages at all.
+///
+/// A sweep works this out for itself while each document is still loaded; this
+/// is the single-file path, which has the whole document in hand throughout.
+fn page_of(loaded: &LoadedFile, line_number: usize) -> Option<usize> {
+    let pdf = loaded.document.as_ref()?;
+    // Line numbers are 1-based; page lookup is not.
+    let index = pdf.page_of_line(line_number.saturating_sub(1));
+    pdf.pages.get(index).map(|page| page.number)
 }
 
 fn kind(loaded: &LoadedFile) -> &'static str {

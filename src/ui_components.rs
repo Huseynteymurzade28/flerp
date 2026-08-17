@@ -2,6 +2,7 @@ use crate::app_structs::{
     AppState, InputMode, Theme, TAB_ANALYZE, TAB_DASHBOARD, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS,
     TAB_VIEWER,
 };
+use crate::file_utils::{FileRole, TreeEntry};
 use crate::media::MediaRenderer;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
@@ -13,6 +14,7 @@ use ratatui::{
     },
     Frame,
 };
+use std::path::Path;
 
 struct Palette {
     background: Color,
@@ -31,7 +33,10 @@ struct Palette {
 pub fn ui(f: &mut Frame, state: &mut AppState, media: &mut MediaRenderer) {
     let palette = palette(state.theme);
     let area = f.area();
-    f.render_widget(Block::default().style(Style::default().bg(palette.background)), area);
+    f.render_widget(
+        Block::default().style(Style::default().bg(palette.background)),
+        area,
+    );
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -51,17 +56,32 @@ pub fn ui(f: &mut Frame, state: &mut AppState, media: &mut MediaRenderer) {
     state.hit.search_results = Rect::ZERO;
     state.hit.media_list = Rect::ZERO;
     state.hit.settings_list = Rect::ZERO;
+    state.hit.browser = Rect::ZERO;
 
     render_header(f, chunks[0], state, &palette);
     render_tabs(f, chunks[1], state, &palette);
 
+    // The tree outlives the modes: which file is loaded is not a per-mode
+    // decision, so the pane stands beside all of them rather than being one.
+    let body = match state.browser {
+        Some(_) => {
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(BROWSER_WIDTH), Constraint::Min(24)])
+                .split(chunks[2]);
+            render_browser(f, columns[0], state, &palette);
+            columns[1]
+        }
+        None => chunks[2],
+    };
+
     match state.current_tab {
-        TAB_DASHBOARD => render_dashboard(f, chunks[2], state, &palette),
-        TAB_SEARCH => render_search(f, chunks[2], state, &palette),
-        TAB_VIEWER => render_viewer(f, chunks[2], state, &palette),
-        TAB_ANALYZE => render_analysis(f, chunks[2], state, &palette),
-        TAB_MEDIA => render_media(f, chunks[2], state, media, &palette),
-        TAB_SETTINGS => render_settings(f, chunks[2], state, &palette),
+        TAB_DASHBOARD => render_dashboard(f, body, state, &palette),
+        TAB_SEARCH => render_search(f, body, state, &palette),
+        TAB_VIEWER => render_viewer(f, body, state, &palette),
+        TAB_ANALYZE => render_analysis(f, body, state, &palette),
+        TAB_MEDIA => render_media(f, body, state, media, &palette),
+        TAB_SETTINGS => render_settings(f, body, state, &palette),
         _ => {}
     }
 
@@ -279,7 +299,9 @@ fn render_header(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette)
         Line::from(vec![
             Span::styled(
                 "flerp",
-                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("  tui text workspace", Style::default().fg(palette.muted)),
         ]),
@@ -301,7 +323,12 @@ fn render_header(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette)
 }
 
 const TAB_LABELS: [&str; 6] = [
-    "Dashboard", "Search", "Viewer", "Analyze", "Media", "Settings",
+    "Dashboard",
+    "Search",
+    "Viewer",
+    "Analyze",
+    "Media",
+    "Settings",
 ];
 
 /// Padding `Tabs` puts on each side of a label, and the width of the divider
@@ -359,11 +386,34 @@ fn render_footer(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette)
             "Enter jump".into(),
             "Esc cancel".into(),
         ],
+        InputMode::Normal if state.browser_focused() => vec![
+            "q quit".into(),
+            "Enter open".into(),
+            "j/k pick".into(),
+            "h/l or ←/→ fold".into(),
+            "f back to the pane".into(),
+            "/ search the tree".into(),
+        ],
         InputMode::Normal if state.current_tab == TAB_MEDIA => vec![
             "q quit".into(),
             "Tab mode".into(),
             "j/k or click pick image".into(),
             "Enter jump to its page".into(),
+        ],
+        InputMode::Normal if state.browser.is_some() => vec![
+            "q quit".into(),
+            "f back to files".into(),
+            "Tab mode".into(),
+            "/ search".into(),
+            "n/N match".into(),
+            ": line".into(),
+            "[ ] page".into(),
+            "j/k g/G ^d/^u scroll".into(),
+            format!("c case {}", on_off(state.case_sensitive)),
+            format!("r regex {}", on_off(state.regex_mode)),
+            format!("w whole-word {}", on_off(state.whole_word)),
+            format!("l line nums {}", on_off(state.line_numbers)),
+            format!("z wrap {}", on_off(state.wrap_lines)),
         ],
         InputMode::Normal => vec![
             "q quit".into(),
@@ -408,6 +458,165 @@ fn fit_hints(hints: &[String], width: u16) -> String {
     line
 }
 
+/// Width of the tree pane.
+///
+/// Fixed rather than proportional: a file name is as long as it is, and a pane
+/// that grew with the terminal would pinch the text on a wide screen for nothing.
+const BROWSER_WIDTH: u16 = 34;
+
+/// Columns of indent per level of nesting.
+const BROWSER_INDENT: usize = 2;
+
+fn render_browser(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Palette) {
+    let Some(browser) = state.browser.as_ref() else {
+        return;
+    };
+
+    // A pane that only sometimes has the keyboard has to say which it is, or
+    // the cursor sitting in it means nothing. The title carries the way back,
+    // because the moment a reader wants it is the moment they are looking at
+    // the pane wondering how to reach it.
+    let (title, border) = if browser.focused {
+        ("Files", palette.accent)
+    } else {
+        ("Files · f", palette.muted)
+    };
+    let block = panel_block(title, border, palette);
+    let inner = block.inner(area);
+
+    // Which file is loaded is the pane's other job. Without it the tree is a
+    // list of names that says nothing about where the reader already is.
+    let loaded = Path::new(&state.file_name);
+
+    let items: Vec<ListItem> = if let Some(error) = &browser.error {
+        vec![ListItem::new(Line::from(Span::styled(
+            error.clone(),
+            Style::default().fg(palette.danger),
+        )))]
+    } else if browser.entries.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "This directory is empty.",
+            Style::default().fg(palette.muted),
+        )))]
+    } else {
+        browser
+            .entries
+            .iter()
+            .map(|entry| {
+                ListItem::new(browser_row(
+                    entry,
+                    browser.is_expanded(&entry.path),
+                    entry.path == loaded,
+                    browser.match_count(&entry.path, entry.is_dir),
+                    inner.width as usize,
+                    palette,
+                ))
+            })
+            .collect()
+    };
+
+    let list = List::new(items).block(block).highlight_style(
+        Style::default()
+            .bg(palette.highlight_bg)
+            .add_modifier(Modifier::BOLD),
+    );
+
+    state.hit.browser = inner;
+    let Some(browser) = state.browser.as_mut() else {
+        return;
+    };
+    f.render_stateful_widget(list, area, &mut browser.list_state);
+}
+
+/// One tree row: indent, a marker, the name, and the match count on the right.
+///
+/// The count is right-aligned because it is the column a reader scans down when
+/// a search has run, and a ragged one is no column at all.
+fn browser_row(
+    entry: &TreeEntry,
+    expanded: bool,
+    loaded: bool,
+    matches: Option<usize>,
+    width: usize,
+    palette: &Palette,
+) -> Line<'static> {
+    let indent = " ".repeat(entry.depth * BROWSER_INDENT);
+    // The marker column is already there for the fold arrows, so the loaded
+    // file can be marked without shifting any name out of line.
+    let marker = match (entry.is_dir, expanded, loaded) {
+        (true, true, _) => "▾ ",
+        (true, false, _) => "▸ ",
+        (false, _, true) => "● ",
+        (false, _, false) => "  ",
+    };
+
+    let count = matches
+        .map(|count| format!(" ×{count}"))
+        .unwrap_or_default();
+    let room = width
+        .saturating_sub(indent.chars().count() + marker.chars().count() + count.chars().count());
+    // The slash is what a directory looks like written down, and it survives a
+    // narrow pane clipping the marker column away.
+    let label = if entry.is_dir {
+        format!("{}/", entry.name)
+    } else {
+        entry.name.clone()
+    };
+    let name = clip(&label, room);
+    let pad = " ".repeat(room.saturating_sub(name.chars().count()));
+
+    let name_color = if entry.is_dir {
+        palette.accent_soft
+    } else {
+        match entry.role {
+            Some(FileRole::Pdf) => palette.accent,
+            Some(FileRole::Image) => palette.accent_alt,
+            Some(FileRole::Binary) => palette.muted,
+            _ => palette.text,
+        }
+    };
+    let name_style = match loaded {
+        true => Style::default()
+            .fg(palette.success)
+            .add_modifier(Modifier::BOLD),
+        false => Style::default().fg(name_color),
+    };
+
+    // A folder's count is borrowed from its contents, so it stays subordinate to
+    // the files that actually hold the matches.
+    let count_color = if entry.is_dir {
+        palette.muted
+    } else {
+        palette.warning
+    };
+
+    Line::from(vec![
+        Span::raw(indent),
+        Span::styled(
+            marker,
+            Style::default().fg(if loaded {
+                palette.success
+            } else {
+                palette.muted
+            }),
+        ),
+        Span::styled(name, name_style),
+        Span::raw(pad),
+        Span::styled(count, Style::default().fg(count_color)),
+    ])
+}
+
+/// Shorten a name to `width` columns, marking that something was cut.
+fn clip(name: &str, width: usize) -> String {
+    if name.chars().count() <= width {
+        return name.to_string();
+    }
+    match width.checked_sub(1) {
+        Some(room) => name.chars().take(room).chain(['…']).collect(),
+        None => String::new(),
+    }
+}
+
 fn render_dashboard(f: &mut Frame, area: Rect, state: &AppState, palette: &Palette) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -424,10 +633,38 @@ fn render_dashboard(f: &mut Frame, area: Rect, state: &AppState, palette: &Palet
         ])
         .split(rows[0]);
 
-    render_stat_card(f, cards[0], "Lines", &state.structural_analysis.lines.to_string(), palette.accent, palette);
-    render_stat_card(f, cards[1], "Words", &state.structural_analysis.words.to_string(), palette.accent_soft, palette);
-    render_stat_card(f, cards[2], "Unique", &state.structural_analysis.unique_words.to_string(), palette.warning, palette);
-    render_stat_card(f, cards[3], "Longest", &state.structural_analysis.longest_line.to_string(), palette.success, palette);
+    render_stat_card(
+        f,
+        cards[0],
+        "Lines",
+        &state.structural_analysis.lines.to_string(),
+        palette.accent,
+        palette,
+    );
+    render_stat_card(
+        f,
+        cards[1],
+        "Words",
+        &state.structural_analysis.words.to_string(),
+        palette.accent_soft,
+        palette,
+    );
+    render_stat_card(
+        f,
+        cards[2],
+        "Unique",
+        &state.structural_analysis.unique_words.to_string(),
+        palette.warning,
+        palette,
+    );
+    render_stat_card(
+        f,
+        cards[3],
+        "Longest",
+        &state.structural_analysis.longest_line.to_string(),
+        palette.success,
+        palette,
+    );
 
     let lower = Layout::default()
         .direction(Direction::Horizontal)
@@ -456,11 +693,21 @@ fn render_search(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
     let mode = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Query ", Style::default().fg(palette.muted)),
-            Span::styled(if state.search_query.is_empty() { "(empty)" } else { &state.search_query }, Style::default().fg(palette.accent)),
+            Span::styled(
+                if state.search_query.is_empty() {
+                    "(empty)"
+                } else {
+                    &state.search_query
+                },
+                Style::default().fg(palette.accent),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Case ", Style::default().fg(palette.muted)),
-            Span::styled(on_off(state.case_sensitive), Style::default().fg(palette.text)),
+            Span::styled(
+                on_off(state.case_sensitive),
+                Style::default().fg(palette.text),
+            ),
             Span::styled("   Regex ", Style::default().fg(palette.muted)),
             Span::styled(on_off(state.regex_mode), Style::default().fg(palette.text)),
             Span::styled("   Whole word ", Style::default().fg(palette.muted)),
@@ -492,8 +739,14 @@ fn render_search(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
                 .iter()
                 .map(|entry| {
                     let mut spans = vec![
-                        Span::styled(format!("L{:>4} ", entry.line_number), Style::default().fg(palette.warning)),
-                        Span::styled(format!("x{:>2} ", entry.match_count), Style::default().fg(palette.accent_alt)),
+                        Span::styled(
+                            format!("L{:>4} ", entry.line_number),
+                            Style::default().fg(palette.warning),
+                        ),
+                        Span::styled(
+                            format!("x{:>2} ", entry.match_count),
+                            Style::default().fg(palette.accent_alt),
+                        ),
                     ];
                     spans.extend(highlighted_line_spans(
                         entry.line.as_str(),
@@ -574,7 +827,10 @@ fn render_viewer(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
             format!("{} of {}", index + 1, document.page_count()),
             Style::default().fg(palette.accent_alt),
         ));
-        position.push(Span::styled("   Images here ", Style::default().fg(palette.muted)));
+        position.push(Span::styled(
+            "   Images here ",
+            Style::default().fg(palette.muted),
+        ));
         position.push(Span::styled(
             images_here.to_string(),
             Style::default().fg(palette.warning),
@@ -585,7 +841,10 @@ fn render_viewer(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pale
         Line::from(position),
         Line::from(vec![
             Span::styled("Line numbers ", Style::default().fg(palette.muted)),
-            Span::styled(on_off(state.line_numbers), Style::default().fg(palette.text)),
+            Span::styled(
+                on_off(state.line_numbers),
+                Style::default().fg(palette.text),
+            ),
             Span::styled("   Wrap ", Style::default().fg(palette.muted)),
             Span::styled(on_off(state.wrap_lines), Style::default().fg(palette.text)),
             Span::styled("   [ ] page step", Style::default().fg(palette.muted)),
@@ -706,7 +965,11 @@ fn render_media(
                     Line::from(Span::styled(
                         format!("{marker}{}", item.title),
                         Style::default()
-                            .fg(if selected { palette.accent_alt } else { palette.text })
+                            .fg(if selected {
+                                palette.accent_alt
+                            } else {
+                                palette.text
+                            })
                             .add_modifier(if selected {
                                 Modifier::BOLD
                             } else {
@@ -843,12 +1106,27 @@ fn render_analysis(f: &mut Frame, area: Rect, state: &AppState, palette: &Palett
     let metrics = Paragraph::new(vec![
         Line::from(format!("Lines: {}", state.structural_analysis.lines)),
         Line::from(format!("Words: {}", state.structural_analysis.words)),
-        Line::from(format!("Characters: {}", state.structural_analysis.characters)),
+        Line::from(format!(
+            "Characters: {}",
+            state.structural_analysis.characters
+        )),
         Line::from(format!("Stanzas: {}", state.structural_analysis.stanzas)),
-        Line::from(format!("Unique words: {}", state.structural_analysis.unique_words)),
-        Line::from(format!("Empty lines: {}", state.structural_analysis.empty_lines)),
-        Line::from(format!("Longest line: {}", state.structural_analysis.longest_line)),
-        Line::from(format!("Avg word length: {:.2}", state.structural_analysis.average_word_length)),
+        Line::from(format!(
+            "Unique words: {}",
+            state.structural_analysis.unique_words
+        )),
+        Line::from(format!(
+            "Empty lines: {}",
+            state.structural_analysis.empty_lines
+        )),
+        Line::from(format!(
+            "Longest line: {}",
+            state.structural_analysis.longest_line
+        )),
+        Line::from(format!(
+            "Avg word length: {:.2}",
+            state.structural_analysis.average_word_length
+        )),
     ])
     .style(Style::default().fg(palette.text))
     .block(panel_block("Metrics", palette.accent, palette));
@@ -862,13 +1140,17 @@ fn render_analysis(f: &mut Frame, area: Rect, state: &AppState, palette: &Palett
             .iter()
             .map(|(line, count)| {
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("x{:>2} ", count), Style::default().fg(palette.warning)),
+                    Span::styled(
+                        format!("x{:>2} ", count),
+                        Style::default().fg(palette.warning),
+                    ),
                     Span::styled(line.as_str(), Style::default().fg(palette.text)),
                 ]))
             })
             .collect()
     };
-    let repeated = List::new(repeated_items).block(panel_block("Repeated Lines", palette.warning, palette));
+    let repeated =
+        List::new(repeated_items).block(panel_block("Repeated Lines", palette.warning, palette));
     f.render_widget(repeated, left[1]);
 
     let right = Layout::default()
@@ -948,7 +1230,11 @@ fn render_analysis(f: &mut Frame, area: Rect, state: &AppState, palette: &Palett
             .collect()
     };
     f.render_widget(
-        List::new(phrase_items).block(panel_block("Repeated Phrases", palette.accent_soft, palette)),
+        List::new(phrase_items).block(panel_block(
+            "Repeated Phrases",
+            palette.accent_soft,
+            palette,
+        )),
         right[2],
     );
 }
@@ -1055,11 +1341,20 @@ fn render_settings(f: &mut Frame, area: Rect, state: &mut AppState, palette: &Pa
         .iter()
         .map(|theme| {
             let style = if *theme == state.theme {
-                Style::default().fg(palette.accent_alt).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(palette.accent_alt)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(palette.text)
             };
-            Line::from(Span::styled(format!("{} {}", if *theme == state.theme { ">" } else { " " }, theme.label()), style))
+            Line::from(Span::styled(
+                format!(
+                    "{} {}",
+                    if *theme == state.theme { ">" } else { " " },
+                    theme.label()
+                ),
+                style,
+            ))
         })
         .collect();
 
@@ -1076,13 +1371,22 @@ fn render_search_input(f: &mut Frame, state: &AppState, palette: &Palette) {
     let input = Paragraph::new(vec![
         Line::from(vec![
             Span::styled("Search ", Style::default().fg(palette.muted)),
-            Span::styled(format!("{}_", state.search_query), Style::default().fg(palette.text)),
+            Span::styled(
+                format!("{}_", state.search_query),
+                Style::default().fg(palette.text),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Regex ", Style::default().fg(palette.muted)),
-            Span::styled(on_off(state.regex_mode), Style::default().fg(palette.accent_alt)),
+            Span::styled(
+                on_off(state.regex_mode),
+                Style::default().fg(palette.accent_alt),
+            ),
             Span::styled("   Whole word ", Style::default().fg(palette.muted)),
-            Span::styled(on_off(state.whole_word), Style::default().fg(palette.accent_alt)),
+            Span::styled(
+                on_off(state.whole_word),
+                Style::default().fg(palette.accent_alt),
+            ),
         ]),
     ])
     .alignment(Alignment::Left)
@@ -1117,10 +1421,23 @@ fn render_goto_input(f: &mut Frame, state: &AppState, palette: &Palette) {
     f.render_widget(input, popup_area);
 }
 
-fn build_viewer_text(state: &AppState, palette: &Palette, line_limit: usize, compact: bool) -> Text<'static> {
+fn build_viewer_text(
+    state: &AppState,
+    palette: &Palette,
+    line_limit: usize,
+    compact: bool,
+) -> Text<'static> {
     if state.file_content.is_empty() {
+        // With a tree on screen there is somewhere to send the reader, so the
+        // empty viewer points at it rather than at the command line they have
+        // already used.
+        let hint = if state.browser.is_some() {
+            "No file loaded. Pick one from the Files pane with Enter."
+        } else {
+            "No file loaded. Launch flerp with a file path."
+        };
         return Text::from(Line::from(Span::styled(
-            "No file loaded. Launch flerp with a file path.",
+            hint,
             Style::default().fg(palette.muted),
         )));
     }
@@ -1150,7 +1467,11 @@ fn build_viewer_text(state: &AppState, palette: &Palette, line_limit: usize, com
             if state.line_numbers {
                 spans.push(Span::styled(
                     format!("{:>4} | ", line_number),
-                    Style::default().fg(if is_selected { palette.accent_alt } else { palette.muted }),
+                    Style::default().fg(if is_selected {
+                        palette.accent_alt
+                    } else {
+                        palette.muted
+                    }),
                 ));
             }
 
@@ -1180,22 +1501,37 @@ fn build_viewer_text(state: &AppState, palette: &Palette, line_limit: usize, com
 
 fn selected_match_text(state: &AppState, palette: &Palette) -> Text<'static> {
     if let Some(error) = &state.search_error {
-        return Text::from(Line::from(Span::styled(error.clone(), Style::default().fg(palette.danger))));
+        return Text::from(Line::from(Span::styled(
+            error.clone(),
+            Style::default().fg(palette.danger),
+        )));
     }
 
     let Some(selected) = state.search_results.get(state.selected_result) else {
         return Text::from(vec![
-            Line::from(Span::styled("No selected result.", Style::default().fg(palette.muted))),
-            Line::from(Span::styled("Press / to search, then use Up/Down to move through matches.", Style::default().fg(palette.text))),
+            Line::from(Span::styled(
+                "No selected result.",
+                Style::default().fg(palette.muted),
+            )),
+            Line::from(Span::styled(
+                "Press / to search, then use Up/Down to move through matches.",
+                Style::default().fg(palette.text),
+            )),
         ]);
     };
 
     Text::from(vec![
         Line::from(vec![
             Span::styled("Line ", Style::default().fg(palette.muted)),
-            Span::styled(selected.line_number.to_string(), Style::default().fg(palette.warning)),
+            Span::styled(
+                selected.line_number.to_string(),
+                Style::default().fg(palette.warning),
+            ),
             Span::styled("   Count ", Style::default().fg(palette.muted)),
-            Span::styled(selected.match_count.to_string(), Style::default().fg(palette.accent_alt)),
+            Span::styled(
+                selected.match_count.to_string(),
+                Style::default().fg(palette.accent_alt),
+            ),
         ]),
         Line::from(""),
         Line::from(highlighted_line_spans(
@@ -1208,7 +1544,10 @@ fn selected_match_text(state: &AppState, palette: &Palette) -> Text<'static> {
             false,
         )),
         Line::from(""),
-        Line::from(Span::styled("Press Enter in Search mode to jump this line into Viewer.", Style::default().fg(palette.muted))),
+        Line::from(Span::styled(
+            "Press Enter in Search mode to jump this line into Viewer.",
+            Style::default().fg(palette.muted),
+        )),
     ])
 }
 
@@ -1241,9 +1580,15 @@ fn highlighted_line_spans(
 
     for matched in regex.find_iter(line) {
         if matched.start() > last_end {
-            spans.push(Span::styled(line[last_end..matched.start()].to_string(), base_style));
+            spans.push(Span::styled(
+                line[last_end..matched.start()].to_string(),
+                base_style,
+            ));
         }
-        spans.push(Span::styled(line[matched.start()..matched.end()].to_string(), highlight_style));
+        spans.push(Span::styled(
+            line[matched.start()..matched.end()].to_string(),
+            highlight_style,
+        ));
         last_end = matched.end();
     }
 
@@ -1298,7 +1643,10 @@ fn render_stat_card(
     let card = Paragraph::new(vec![
         Line::from(Span::styled(label, Style::default().fg(palette.muted))),
         Line::from(""),
-        Line::from(Span::styled(value, Style::default().fg(color).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            value,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        )),
     ])
     .alignment(Alignment::Center)
     .block(panel_block(label, color, palette));

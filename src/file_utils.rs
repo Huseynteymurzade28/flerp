@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fs;
@@ -14,6 +15,61 @@ pub struct LoadedFile {
     pub document: Option<Arc<PdfDocument>>,
     pub media: Vec<MediaItem>,
     pub notice: Option<String>,
+}
+
+/// What flerp can do with a file, decided from its name and its first bytes.
+///
+/// One place answers this so the walk, the search and the file browser cannot
+/// disagree about what a file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileRole {
+    /// Readable as text, whatever its extension.
+    Text,
+    /// A PDF: text layer, page structure, and images flerp can lift out.
+    Pdf,
+    /// An image. It opens in the Media tab, but has no text to search: the text
+    /// flerp shows for one is a description it wrote itself.
+    Image,
+    /// A NUL byte in the first 8 KiB, which is how grep decides the same thing.
+    Binary,
+}
+
+impl FileRole {
+    pub fn of(path: &Path) -> Self {
+        match extension_of(path).as_deref() {
+            Some("pdf") => FileRole::Pdf,
+            Some("png") | Some("jpg") | Some("jpeg") => FileRole::Image,
+            _ if looks_like_text(path) => FileRole::Text,
+            _ => FileRole::Binary,
+        }
+    }
+
+    /// True for the roles a search can say anything about.
+    pub fn is_searchable(self) -> bool {
+        matches!(self, FileRole::Text | FileRole::Pdf)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FileRole::Text => "text",
+            FileRole::Pdf => "pdf",
+            FileRole::Image => "image",
+            FileRole::Binary => "binary",
+        }
+    }
+}
+
+/// One row in the file browser's view of a directory tree.
+#[derive(Clone)]
+pub struct TreeEntry {
+    pub path: PathBuf,
+    /// The file or directory name on its own, which is all the browser draws.
+    pub name: String,
+    /// Levels below the root, for the indent.
+    pub depth: usize,
+    pub is_dir: bool,
+    /// How a search would treat this file. `None` for directories.
+    pub role: Option<FileRole>,
 }
 
 /// Files worth searching under a directory, plus what the walk could not read.
@@ -52,8 +108,8 @@ pub fn load_file(file_path: &str) -> Result<LoadedFile, Box<dyn Error>> {
 pub fn load_for_search(file_path: &str) -> Result<LoadedFile, Box<dyn Error>> {
     let path = Path::new(file_path);
 
-    match extension_of(path).as_deref() {
-        Some("pdf") => {
+    match FileRole::of(path) {
+        FileRole::Pdf => {
             let document = pdf_doc::load_text(file_path)?;
             Ok(LoadedFile {
                 content: document.text.clone(),
@@ -62,8 +118,9 @@ pub fn load_for_search(file_path: &str) -> Result<LoadedFile, Box<dyn Error>> {
                 notice: None,
             })
         }
-        Some("png") | Some("jpg") | Some("jpeg") => Err("an image has no text to search".into()),
-        _ => Ok(LoadedFile {
+        FileRole::Image => Err("an image has no text to search".into()),
+        FileRole::Binary => Err("not a text file".into()),
+        FileRole::Text => Ok(LoadedFile {
             content: fs::read_to_string(file_path)?,
             document: None,
             media: Vec::new(),
@@ -114,7 +171,7 @@ pub fn collect_searchable(root: &Path) -> Result<SearchableFiles, Box<dyn Error>
 
             if file_type.is_dir() {
                 pending.push(path);
-            } else if file_type.is_file() && is_searchable(&path) {
+            } else if file_type.is_file() && FileRole::of(&path).is_searchable() {
                 found.files.push(path);
             }
         }
@@ -123,6 +180,97 @@ pub fn collect_searchable(root: &Path) -> Result<SearchableFiles, Box<dyn Error>
     found.files.sort();
     found.unreadable.sort();
     Ok(found)
+}
+
+/// The browser's view of `root`: one row per visible entry, in display order.
+///
+/// Only directories in `expanded` are descended into, so the cost of listing a
+/// tree is the cost of what is on screen. A folder of a hundred thousand nested
+/// files is as cheap to open as an empty one, and nothing has to guess how deep
+/// it is safe to go.
+///
+/// Hidden entries are left out, the same ones the search skips, so the browser
+/// shows what a search over the same root could reach.
+pub fn list_tree(
+    root: &Path,
+    expanded: &HashSet<PathBuf>,
+) -> Result<Vec<TreeEntry>, Box<dyn Error>> {
+    let mut entries = Vec::new();
+    // The root is the directory the user named, so failing to read it is worth
+    // an error. A subdirectory that cannot be read is simply drawn empty.
+    push_level(root, 0, expanded, &mut entries, true)?;
+    Ok(entries)
+}
+
+fn push_level(
+    directory: &Path,
+    depth: usize,
+    expanded: &HashSet<PathBuf>,
+    out: &mut Vec<TreeEntry>,
+    is_root: bool,
+) -> Result<(), Box<dyn Error>> {
+    let read = match fs::read_dir(directory) {
+        Ok(read) => read,
+        Err(error) if is_root => return Err(error.into()),
+        Err(_) => return Ok(()),
+    };
+
+    let mut directories = Vec::new();
+    let mut files = Vec::new();
+
+    for entry in read.flatten() {
+        if is_hidden(&entry.file_name()) {
+            continue;
+        }
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        // Symlinked directories are not followed, for the same reason the search
+        // does not follow them: a link to an ancestor would repeat forever.
+        if file_type.is_dir() {
+            directories.push(entry.path());
+        } else if file_type.is_file() {
+            files.push(entry.path());
+        }
+    }
+
+    directories.sort();
+    files.sort();
+
+    // Directories first, each followed by whatever it holds, then this level's
+    // files. That is the order a reader expects a tree in.
+    for path in directories {
+        out.push(TreeEntry {
+            name: display_name(&path),
+            depth,
+            is_dir: true,
+            role: None,
+            path: path.clone(),
+        });
+
+        if expanded.contains(&path) {
+            push_level(&path, depth + 1, expanded, out, false)?;
+        }
+    }
+
+    for path in files {
+        out.push(TreeEntry {
+            name: display_name(&path),
+            depth,
+            is_dir: false,
+            role: Some(FileRole::of(&path)),
+            path,
+        });
+    }
+
+    Ok(())
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .unwrap_or(path.as_os_str())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn extension_of(path: &Path) -> Option<String> {
@@ -135,14 +283,6 @@ fn extension_of(path: &Path) -> Option<String> {
 /// descends into `.git` spends its time on object files nobody searched for.
 fn is_hidden(name: &OsStr) -> bool {
     name.to_string_lossy().starts_with('.')
-}
-
-fn is_searchable(path: &Path) -> bool {
-    match extension_of(path).as_deref() {
-        Some("pdf") => true,
-        Some("png") | Some("jpg") | Some("jpeg") => false,
-        _ => looks_like_text(path),
-    }
 }
 
 /// Whether a file's opening bytes look like text rather than a binary blob.

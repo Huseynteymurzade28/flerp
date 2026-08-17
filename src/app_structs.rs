@@ -6,6 +6,7 @@ use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use serde::{Deserialize, Serialize};
 
+use crate::browser::Browser;
 use crate::media::{GraphicsMode, MediaItem};
 use crate::pdf_doc::PdfDocument;
 use crate::text_analysis::{Keyword, Phrase, Readability, SearchOptions};
@@ -76,7 +77,11 @@ pub struct Cli {
     #[arg(short = 'i', long, help = "Match the search query case-insensitively")]
     pub ignore_case: bool,
 
-    #[arg(short = 'e', long, help = "Treat the search query as a regular expression")]
+    #[arg(
+        short = 'e',
+        long,
+        help = "Treat the search query as a regular expression"
+    )]
     pub regex: bool,
 
     #[arg(short = 'w', long, help = "Match the search query on whole words only")]
@@ -97,20 +102,38 @@ impl Cli {
     /// `--search` on its own is not enough: it seeds the TUI's search box, and
     /// only turns into printed matches alongside one of these flags — or when
     /// the target is something the TUI cannot open in the first place.
+    ///
+    /// One directory is the exception. The TUI can open that now: it becomes the
+    /// root of the tree pane. A query alongside it still prints, because
+    /// `flerp docs -s needle` is a grep and piping it somewhere is the point.
     pub fn is_headless(&self) -> bool {
-        self.json || self.text || self.extract_images.is_some() || self.spans_many_files()
+        self.json
+            || self.text
+            || self.extract_images.is_some()
+            || self.paths.len() > 1
+            || (self.named_a_directory() && self.search.is_some())
     }
 
-    /// True when the command line named more than one file's worth of input.
+    /// True when the one path on the command line is a directory.
     ///
-    /// The TUI holds a single file, so a directory or a shell glob has nowhere
-    /// to go in it and belongs on stdout instead.
-    pub fn spans_many_files(&self) -> bool {
-        self.paths.len() > 1
-            || self
-                .paths
-                .first()
-                .is_some_and(|path| Path::new(path).is_dir())
+    /// Naming a directory is what turns `--search` into a grep. Falling back to
+    /// the working directory is not: `flerp --search needle` with no path is
+    /// someone at a prompt, not someone building a pipeline.
+    fn named_a_directory(&self) -> bool {
+        matches!(self.paths.as_slice(), [only] if Path::new(only).is_dir())
+    }
+
+    /// The directory the TUI opens its tree on.
+    ///
+    /// With nothing named at all this is the working directory, so that plain
+    /// `flerp` starts somewhere the user can look around from rather than at an
+    /// empty workspace telling them to go and find a path.
+    pub fn browser_root(&self) -> Option<PathBuf> {
+        match self.paths.as_slice() {
+            [] => Some(PathBuf::from(".")),
+            [only] if Path::new(only).is_dir() => Some(PathBuf::from(only)),
+            _ => None,
+        }
     }
 
     pub fn search_options(&self) -> SearchOptions {
@@ -194,12 +217,18 @@ impl Theme {
     }
 
     pub fn next(self) -> Self {
-        let index = Self::ALL.iter().position(|theme| *theme == self).unwrap_or(0);
+        let index = Self::ALL
+            .iter()
+            .position(|theme| *theme == self)
+            .unwrap_or(0);
         Self::ALL[(index + 1) % Self::ALL.len()]
     }
 
     pub fn previous(self) -> Self {
-        let index = Self::ALL.iter().position(|theme| *theme == self).unwrap_or(0);
+        let index = Self::ALL
+            .iter()
+            .position(|theme| *theme == self)
+            .unwrap_or(0);
         Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 }
@@ -238,6 +267,8 @@ pub struct HitRegions {
     pub search_results: Rect,
     pub media_list: Rect,
     pub settings_list: Rect,
+    /// Rows of the directory tree, when the pane is on screen.
+    pub browser: Rect,
 }
 
 #[derive(Clone)]
@@ -277,6 +308,10 @@ pub struct AppState {
     /// Rows the viewer actually has room for, measured during the last draw.
     /// Paging keys use this so a page step matches what is on screen.
     pub viewer_height: usize,
+    /// The directory tree, present only when flerp was opened on a directory.
+    /// Every mode draws beside it, because which file is loaded is a decision
+    /// that outlives whichever mode the user happens to be in.
+    pub browser: Option<Browser>,
     /// Clickable regions, measured during the last draw.
     pub hit: HitRegions,
 }
@@ -318,11 +353,13 @@ impl Default for AppState {
             keyword_limit: 10,
             preview_line_count: 50,
             content_scroll: 0,
-            status_message: "Open a file to start searching, viewing, and analyzing text.".to_string(),
+            status_message: "Open a file to start searching, viewing, and analyzing text."
+                .to_string(),
             document: None,
             media: Vec::new(),
             selected_media: 0,
             viewer_height: 50,
+            browser: None,
             hit: HitRegions::default(),
         }
     }
@@ -354,5 +391,23 @@ impl AppState {
 
     pub fn selected_media_item(&self) -> Option<&MediaItem> {
         self.media.get(self.selected_media)
+    }
+
+    /// True while the tree pane holds the keyboard, which is what decides
+    /// whether a movement key walks the tree or scrolls the mode pane.
+    pub fn browser_focused(&self) -> bool {
+        self.browser.as_ref().is_some_and(|browser| browser.focused)
+    }
+
+    /// The three search toggles, gathered for whoever is about to search.
+    ///
+    /// The loaded file and the tree sweep must agree about what a match is, so
+    /// neither assembles these for itself.
+    pub fn search_options(&self) -> SearchOptions {
+        SearchOptions {
+            case_sensitive: self.case_sensitive,
+            regex_mode: self.regex_mode,
+            whole_word: self.whole_word,
+        }
     }
 }

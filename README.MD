@@ -62,6 +62,29 @@ silently dropped.
 
 The application is organized into various modes, reached with `Tab`.
 
+### Files
+
+Run flerp with no arguments and it opens on the working directory; name a
+directory and it opens on that one. Either way a tree pane stands to the left of
+every mode, because which file is loaded is not a per-mode decision:
+
+```bash
+flerp                # the working directory
+flerp ./contracts    # somewhere else
+```
+
+Folders are read only when you open them, so a directory of a hundred thousand
+nested files costs no more to browse than an empty one. `Enter` opens a folder or
+loads a file; `h`/`l` and the arrow keys fold; `f` moves the keyboard between the
+tree and the mode beside it. The loaded file is marked `●` in the tree, and the
+pane's title says `Files · f` whenever the keyboard is somewhere else.
+
+Search from the tree and committing the query with `Enter` sweeps every text file
+and PDF underneath it. Each row then carries its match count, and a closed folder
+carries the total of everything inside it, so you can see where the matches are
+before opening anything. Picking a file out of a swept tree lands the viewer on
+its first match.
+
 ### Dashboard
 
 Quick summary cards, a content preview, and the currently selected search match.
@@ -112,7 +135,8 @@ Theme and behavior settings, saved automatically as you change them.
 - Match counts per result
 - Jump-to-line from the selected result
 - Recursive search across a directory of text files and PDFs, from the shell
-  (see [Searching a whole directory](#searching-a-whole-directory))
+  (see [Searching a whole directory](#searching-a-whole-directory)) or from the
+  tree pane, which then shows the match count on every row (see [Files](#files))
 
 ### Analysis
 
@@ -171,6 +195,7 @@ terminators, so abbreviations inflate the count slightly.
 ### UI and Workflow
 
 - Full-screen terminal interface
+- Directory tree pane beside every mode, with `f` to move between the two
 - Viewer fills the available height, and `PageUp`/`PageDown` move by one screenful
 - Multiple themes
 - Optional line numbers
@@ -245,14 +270,24 @@ flerp --page 12 report.pdf          # open the viewer on page 12
 flerp --search "invoice" report.pdf # open with the search already applied
 ```
 
+### Browse a directory
+
+```bash
+flerp                # the working directory
+flerp ./contracts    # somewhere else
+```
+
+Opens the TUI with that directory as the tree pane and no file loaded yet. See
+[Files](#files).
+
 ### Search a directory
 
 ```bash
 flerp --search "invoice" ./contracts
 ```
 
-Prints matches from every text file and PDF under `./contracts` rather than
-opening anything, since the TUI holds one file at a time. See
+A query alongside a directory prints matches from every text file and PDF under
+it rather than opening anything, so it pipes into other tools. See
 [Searching a whole directory](#searching-a-whole-directory).
 
 ### Show help

@@ -1,16 +1,18 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 use std::error::Error;
+use std::path::Path;
 use std::time::Instant;
 
 use crate::app_structs::{
     AppState, InputMode, TAB_COUNT, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS, TAB_VIEWER,
 };
+use crate::browser::Browser;
 use crate::file_utils::load_file;
 use crate::pdf_doc::PdfDocument;
 use crate::settings::AppSettings;
 use crate::text_analysis::{
-    analyze_content, analyze_structure, extract_repeated_lines, search_with_options, SearchOptions,
+    analyze_content, analyze_structure, extract_repeated_lines, search_with_options,
 };
 
 /// Lines one wheel notch moves the content. Three is the common terminal step;
@@ -40,6 +42,18 @@ impl App {
             state,
             last_tick: Instant::now(),
         }
+    }
+
+    /// Open the tree pane on a directory, as a bare directory argument does.
+    pub fn open_directory(&mut self, root: &Path) -> Result<(), Box<dyn Error>> {
+        let browser = Browser::open(root)?;
+        self.state.status_message = format!(
+            "{} · {} entries · Enter opens, Ctrl-w moves between panes",
+            root.display(),
+            browser.entries.len()
+        );
+        self.state.browser = Some(browser);
+        Ok(())
     }
 
     pub fn load_file(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
@@ -110,7 +124,8 @@ impl App {
                 let step = if increase { 5 } else { -5 };
                 self.state.preview_line_count =
                     (self.state.preview_line_count as isize + step).clamp(10, 200) as usize;
-                self.state.content_scroll = self.state.content_scroll.min(self.max_content_scroll());
+                self.state.content_scroll =
+                    self.state.content_scroll.min(self.max_content_scroll());
             }
             3 => self.state.case_sensitive = increase,
             4 => self.state.regex_mode = increase,
@@ -122,6 +137,7 @@ impl App {
 
         if (3..=5).contains(&self.state.settings_selection) {
             self.update_search();
+            self.resweep_tree();
         }
 
         self.persist_settings();
@@ -149,7 +165,8 @@ impl App {
     /// Move the viewer by whole PDF pages. `step` is in pages, not lines.
     fn jump_page(&mut self, step: isize) {
         let Some(document) = self.state.document.clone() else {
-            self.state.status_message = "Page jumps need a paged document such as a PDF.".to_string();
+            self.state.status_message =
+                "Page jumps need a paged document such as a PDF.".to_string();
             return;
         };
         if document.pages.is_empty() {
@@ -180,11 +197,7 @@ impl App {
             return;
         };
 
-        let Some(index) = document
-            .pages
-            .iter()
-            .position(|page| page.number == number)
-        else {
+        let Some(index) = document.pages.iter().position(|page| page.number == number) else {
             self.state.status_message = format!(
                 "Page {number} is outside this document's {} page(s).",
                 document.page_count()
@@ -215,9 +228,14 @@ impl App {
     }
 
     /// Seed the search box from outside the event loop, as `--search` does.
+    ///
+    /// A query handed in at startup is already committed, so the tree is swept
+    /// straight away rather than waiting for the user to press Enter on a query
+    /// they did not type.
     pub fn set_search_query(&mut self, query: &str) {
         self.state.search_query = query.to_string();
         self.update_search();
+        self.sweep_tree();
         self.state.current_tab = TAB_SEARCH;
     }
 
@@ -284,11 +302,7 @@ impl App {
         match search_with_options(
             &self.state.search_query,
             &self.state.file_content,
-            SearchOptions {
-                case_sensitive: self.state.case_sensitive,
-                regex_mode: self.state.regex_mode,
-                whole_word: self.state.whole_word,
-            },
+            self.state.search_options(),
         ) {
             Ok(results) => {
                 self.state.search_results = results;
@@ -300,11 +314,142 @@ impl App {
         }
 
         self.state.selected_result = 0;
-        self.state.result_list_state.select(if self.state.search_results.is_empty() {
-            None
+        self.state
+            .result_list_state
+            .select(if self.state.search_results.is_empty() {
+                None
+            } else {
+                Some(0)
+            });
+    }
+
+    /// Act on the row the tree cursor is on: open or close a folder, or load a
+    /// file and follow it into the pane that shows it.
+    fn activate_browser_entry(&mut self) {
+        let Some(browser) = self.state.browser.as_mut() else {
+            return;
+        };
+        let Some(path) = browser.activate() else {
+            return;
+        };
+
+        let Some(name) = path.to_str() else {
+            self.state.status_message = format!("{} is not a valid UTF-8 path.", path.display());
+            return;
+        };
+
+        if let Err(error) = self.load_file(name) {
+            self.state.status_message = format!("Could not open {}: {error}", path.display());
+            return;
+        }
+
+        // Picking a file is the user done choosing, so the keyboard goes with
+        // it. A query already in the box lands them on its first match, which
+        // is the whole reason to pick a file out of a swept tree.
+        self.focus_browser(false);
+        if self.state.search_results.is_empty() {
+            self.state.current_tab = TAB_VIEWER;
         } else {
-            Some(0)
-        });
+            self.jump_to_selected_result();
+        }
+    }
+
+    fn focus_browser(&mut self, focused: bool) {
+        if let Some(browser) = self.state.browser.as_mut() {
+            browser.focused = focused;
+        }
+    }
+
+    fn move_browser(&mut self, step: isize) {
+        if let Some(browser) = self.state.browser.as_mut() {
+            browser.move_selection(step);
+        }
+    }
+
+    /// Run the committed query across every file under the tree's root.
+    ///
+    /// This opens files rather than searching one already in memory, so it waits
+    /// for the query to be committed instead of following every keystroke the
+    /// way the loaded file's own search does.
+    fn sweep_tree(&mut self) {
+        let query = self.state.search_query.clone();
+        let options = self.state.search_options();
+
+        let Some(browser) = self.state.browser.as_mut() else {
+            return;
+        };
+        let message = match browser.sweep(&query, options) {
+            Ok(()) => browser.sweep_summary(),
+            Err(error) => Some(format!("Could not search the tree: {error}")),
+        };
+
+        if let Some(message) = message {
+            self.state.status_message = message;
+        }
+    }
+
+    /// Redo the tree sweep after a toggle changed what counts as a match.
+    ///
+    /// Only when one has already run: a toggle is not itself a reason to go
+    /// reading a directory the user has not asked to search.
+    fn resweep_tree(&mut self) {
+        if self
+            .state
+            .browser
+            .as_ref()
+            .is_some_and(|browser| browser.results.is_some())
+        {
+            self.sweep_tree();
+        }
+    }
+
+    /// Movement keys walk the tree while it holds focus.
+    ///
+    /// Only movement is taken over: the mode keys, the search toggles and
+    /// quitting all still work, so focus changes what a handful of keys mean
+    /// rather than trapping the user in the pane.
+    fn handle_browser_key(&mut self, key: KeyCode) -> bool {
+        let page = self.state.viewer_height as isize;
+
+        // `h` and `l` fold here. They are not aliased everywhere because `l`
+        // toggles line numbers, but that toggle means nothing to a tree, so the
+        // pane can have the pair the rest of the app has to do without.
+        let key = match key {
+            KeyCode::Char('h') => KeyCode::Left,
+            KeyCode::Char('l') => KeyCode::Right,
+            other => other,
+        };
+
+        match key {
+            KeyCode::Up => self.move_browser(-1),
+            KeyCode::Down => self.move_browser(1),
+            KeyCode::PageUp => self.move_browser(-page),
+            KeyCode::PageDown => self.move_browser(page),
+            KeyCode::Enter => self.activate_browser_entry(),
+            KeyCode::Left => {
+                if let Some(browser) = self.state.browser.as_mut() {
+                    browser.collapse();
+                }
+            }
+            KeyCode::Right => {
+                if let Some(browser) = self.state.browser.as_mut() {
+                    browser.expand();
+                }
+            }
+            KeyCode::Home => {
+                if let Some(browser) = self.state.browser.as_mut() {
+                    browser.select_first();
+                }
+            }
+            KeyCode::End => {
+                if let Some(browser) = self.state.browser.as_mut() {
+                    browser.select_last();
+                }
+            }
+            _ => return false,
+        }
+
+        true
     }
 
     /// Move the search selection without following it into the viewer.
@@ -383,6 +528,7 @@ impl App {
             KeyCode::Enter => {
                 self.state.input_mode = InputMode::Normal;
                 self.update_search();
+                self.sweep_tree();
             }
             KeyCode::Backspace => {
                 self.state.search_query.pop();
@@ -428,7 +574,12 @@ impl App {
             return self.handle_control_key(event.code);
         }
 
-        match vim_alias(event.code) {
+        let key = vim_alias(event.code);
+        if self.state.browser_focused() && self.handle_browser_key(key) {
+            return true;
+        }
+
+        match key {
             KeyCode::Char('q') | KeyCode::Esc => return false,
             KeyCode::Char('/') => {
                 self.state.input_mode = InputMode::Search;
@@ -444,6 +595,13 @@ impl App {
             KeyCode::BackTab => {
                 self.state.current_tab = (self.state.current_tab + TAB_COUNT - 1) % TAB_COUNT;
             }
+            // Plain `f`, because the tree has to be reachable from a terminal
+            // that swallows the modified keys: Ctrl-w closes a tab in several
+            // emulators, so it cannot be the only way back.
+            KeyCode::Char('f') => {
+                let focused = self.state.browser_focused();
+                self.focus_browser(!focused);
+            }
             KeyCode::Char('[') => self.jump_page(-1),
             KeyCode::Char(']') => self.jump_page(1),
             KeyCode::Char('n') => self.step_match(1),
@@ -451,16 +609,19 @@ impl App {
             KeyCode::Char('c') => {
                 self.state.case_sensitive = !self.state.case_sensitive;
                 self.update_search();
+                self.resweep_tree();
                 self.persist_settings();
             }
             KeyCode::Char('r') => {
                 self.state.regex_mode = !self.state.regex_mode;
                 self.update_search();
+                self.resweep_tree();
                 self.persist_settings();
             }
             KeyCode::Char('w') => {
                 self.state.whole_word = !self.state.whole_word;
                 self.update_search();
+                self.resweep_tree();
                 self.persist_settings();
             }
             KeyCode::Char('l') => {
@@ -515,6 +676,14 @@ impl App {
 
         match key {
             KeyCode::Char('c') => return false,
+            // Vim's window key, kept as a second way in for the terminals that
+            // let it through. `f` is the one the footer advertises.
+            KeyCode::Char('w') => {
+                let focused = self.state.browser_focused();
+                self.focus_browser(!focused);
+            }
+            KeyCode::Char('d') if self.state.browser_focused() => self.move_browser(half),
+            KeyCode::Char('u') if self.state.browser_focused() => self.move_browser(-half),
             KeyCode::Char('d') => self.scroll_content(half),
             KeyCode::Char('u') => self.scroll_content(-half),
             KeyCode::Char('f') => self.scroll_content(full),
@@ -549,8 +718,11 @@ impl App {
     fn scroll_at(&mut self, position: Position, direction: isize) {
         let hit = &self.state.hit;
         let (results, media, settings) = (hit.search_results, hit.media_list, hit.settings_list);
+        let browser = hit.browser;
 
-        if results.contains(position) {
+        if browser.contains(position) {
+            self.move_browser(direction);
+        } else if results.contains(position) {
             self.move_result(direction);
         } else if media.contains(position) {
             self.select_media(direction);
@@ -580,8 +752,25 @@ impl App {
 
         let hit = &self.state.hit;
         let (results, media, settings) = (hit.search_results, hit.media_list, hit.settings_list);
+        let browser = hit.browser;
 
-        if results.contains(position) {
+        if browser.contains(position) {
+            // Clicking the tree is a way of reaching for it, so it takes the
+            // keyboard too and a second click on the same row opens the file.
+            let row = (position.y - browser.y) as usize;
+            let already_focused = self.state.browser_focused();
+            let previous = self.state.browser.as_ref().map(|browser| browser.selected);
+
+            self.focus_browser(true);
+            if let Some(browser) = self.state.browser.as_mut() {
+                browser.select_row(row);
+            }
+
+            let landed = self.state.browser.as_ref().map(|browser| browser.selected);
+            if already_focused && previous == landed {
+                self.activate_browser_entry();
+            }
+        } else if results.contains(position) {
             // The list scrolls independently of the selection once the matches
             // outgrow the pane, so the clicked row only means something when
             // read through the list's own offset.
@@ -591,15 +780,18 @@ impl App {
                 self.state.selected_result = index;
                 self.state.result_list_state.select(Some(index));
             }
+            self.focus_browser(false);
         } else if media.contains(position) {
             // Each image occupies two rows: its title and its detail line.
             let index = (position.y - media.y) as usize / 2;
             if index < self.state.media.len() {
                 self.state.selected_media = index;
             }
+            self.focus_browser(false);
         } else if settings.contains(position) {
             let row = (position.y - settings.y) as usize;
             self.state.settings_selection = row.min(SETTINGS_LAST);
+            self.focus_browser(false);
         }
     }
 
