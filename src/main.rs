@@ -20,7 +20,11 @@ use flerp::ui_components::ui;
 
 pub fn run_tui(cli: &Cli, graphics: GraphicsMode) -> Result<(), Box<dyn Error>> {
     if !stdin().is_terminal() || !stdout().is_terminal() {
-        return Err("flerp requires an interactive terminal session".into());
+        // The `flerp: ` prefix is added when the error is printed, so messages
+        // start with what went wrong rather than repeating the program's name.
+        return Err(
+            "an interactive terminal is required; --json and --text work without one".into(),
+        );
     }
 
     // Probing the terminal for its graphics protocol writes an escape sequence
@@ -37,7 +41,7 @@ pub fn run_tui(cli: &Cli, graphics: GraphicsMode) -> Result<(), Box<dyn Error>> 
     let mut app_instance = App::new();
 
     // Dosya yükleme
-    if let Some(path) = cli.file.as_deref() {
+    if let Some(path) = cli.paths.first() {
         if let Err(e) = app_instance.load_file(path) {
             eprintln!("Error loading file: {}", e);
             // Consider how to handle this error: maybe exit or continue without a file
@@ -96,12 +100,8 @@ fn dispatch(event: Event, app: &mut App) -> bool {
 }
 
 fn run_headless(cli: &Cli) -> Result<(), Box<dyn Error>> {
-    let Some(file) = cli.file.clone() else {
-        return Err("--json, --text and --extract-images each need a file path".into());
-    };
-
     let request = HeadlessRequest {
-        file,
+        targets: cli.paths.clone(),
         json: cli.json,
         text: cli.text,
         extract_images: cli.extract_images.clone(),

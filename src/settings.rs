@@ -54,8 +54,7 @@ impl AppSettings {
             fs::create_dir_all(parent)?;
         }
 
-        let contents = toml::to_string_pretty(self)
-            .map_err(|error| io::Error::new(io::ErrorKind::Other, error))?;
+        let contents = toml::to_string_pretty(self).map_err(io::Error::other)?;
         fs::write(path, contents)
     }
 

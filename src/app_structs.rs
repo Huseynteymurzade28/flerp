@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Parser;
@@ -24,8 +24,11 @@ pub const TAB_SETTINGS: usize = 5;
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(about = "A TUI for text analysis and keyword extraction", long_about = None)]
 pub struct Cli {
-    #[arg(help = "Path to the file to analyze")]
-    pub file: Option<String>,
+    #[arg(
+        value_name = "PATH",
+        help = "File to open, or the files and directories to search with --search"
+    )]
+    pub paths: Vec<String>,
 
     #[arg(
         long,
@@ -59,7 +62,7 @@ pub struct Cli {
         short,
         long,
         value_name = "QUERY",
-        help = "Search query: printed as matches in headless mode, pre-filled in the TUI otherwise"
+        help = "Search query: printed as matches headlessly or across a directory, pre-filled in the TUI otherwise"
     )]
     pub search: Option<String>,
 
@@ -91,10 +94,23 @@ pub struct Cli {
 impl Cli {
     /// True when the flags ask for output rather than a terminal session.
     ///
-    /// `--search` alone is not enough: on its own it seeds the TUI's search box,
-    /// and only turns into printed matches alongside one of these.
+    /// `--search` on its own is not enough: it seeds the TUI's search box, and
+    /// only turns into printed matches alongside one of these flags — or when
+    /// the target is something the TUI cannot open in the first place.
     pub fn is_headless(&self) -> bool {
-        self.json || self.text || self.extract_images.is_some()
+        self.json || self.text || self.extract_images.is_some() || self.spans_many_files()
+    }
+
+    /// True when the command line named more than one file's worth of input.
+    ///
+    /// The TUI holds a single file, so a directory or a shell glob has nowhere
+    /// to go in it and belongs on stdout instead.
+    pub fn spans_many_files(&self) -> bool {
+        self.paths.len() > 1
+            || self
+                .paths
+                .first()
+                .is_some_and(|path| Path::new(path).is_dir())
     }
 
     pub fn search_options(&self) -> SearchOptions {

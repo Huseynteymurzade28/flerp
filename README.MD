@@ -15,6 +15,8 @@ It is built in Rust and currently supports plain text files, PDFs, and images. P
 - Shows quick structural metrics such as line count, word count, unique words, empty lines, and longest line
 - Finds the most frequent keywords in the loaded content
 - Searches file content with live updates
+- Searches a whole directory tree, PDFs included, and reports the page each
+  match landed on
 - Supports case-sensitive, regex, and whole-word search modes
 - Lets you jump from search results directly into the viewer
 - Highlights repeated lines that appear multiple times
@@ -109,6 +111,8 @@ Theme and behavior settings, saved automatically as you change them.
 - Whole-word matching toggle
 - Match counts per result
 - Jump-to-line from the selected result
+- Recursive search across a directory of text files and PDFs, from the shell
+  (see [Searching a whole directory](#searching-a-whole-directory))
 
 ### Analysis
 
@@ -183,7 +187,7 @@ terminators, so abbreviations inflate the count slightly.
 yay -S flerp
 ```
 
-or the latest development version built from the `master` branch:
+or the latest development version built from the `main` branch:
 
 ```bash
 yay -S flerp-git
@@ -241,6 +245,16 @@ flerp --page 12 report.pdf          # open the viewer on page 12
 flerp --search "invoice" report.pdf # open with the search already applied
 ```
 
+### Search a directory
+
+```bash
+flerp --search "invoice" ./contracts
+```
+
+Prints matches from every text file and PDF under `./contracts` rather than
+opening anything, since the TUI holds one file at a time. See
+[Searching a whole directory](#searching-a-whole-directory).
+
 ### Show help
 
 ```bash
@@ -257,7 +271,9 @@ flerp --version
 
 Everything `flerp` works out about a file can be written to stdout or to disk
 instead of drawn in a terminal, so it composes with the rest of your shell.
-Passing any of `--json`, `--text` or `--extract-images` skips the TUI entirely.
+Passing any of `--json`, `--text` or `--extract-images` skips the TUI entirely,
+and so does naming a directory or more than one path, since the TUI holds a
+single file and has nowhere to put the rest.
 
 ### Analysis as JSON
 
@@ -302,7 +318,7 @@ inside the JSON object rather than beside it, so stdout stays parseable.
 
 ```bash
 flerp --search "revenue" --json report.pdf   # matches with page numbers
-flerp --search "revenue" --text report.pdf   # no: --text and --json conflict
+flerp --search "revenue" --text report.pdf   # no: --text ignores the search
 flerp --search "revenue" --extract-images ./out report.pdf
 ```
 
@@ -311,6 +327,90 @@ count. Without it, matches print grep-style as `file:line:text`. The search
 modifiers work headlessly too: `-i` ignore case, `-e` regex, `-w` whole word.
 Unlike the TUI, headless search never reads your saved settings, so a script
 gets the same result on any machine.
+
+### Searching a whole directory
+
+Point `--search` at a directory instead of a file and `flerp` walks it:
+
+```bash
+flerp --search "invoice" ./contracts          # every text file and every PDF
+flerp --search "invoice" ./contracts *.pdf    # directories and files together
+flerp --search "invoice" --json ./contracts
+```
+
+This is the thing `grep` cannot do for you. A folder of PDFs is opaque to every
+line-oriented tool in the shell, and `flerp` reads each one's text layer, so a
+match inside page 14 of a scanned-in contract prints beside matches from the
+plain text files next to it.
+
+Output is grep's, so it drops into the same pipelines and the same editors:
+
+```text
+contracts/2025-terms.txt:42:invoice terms, revised
+contracts/report.pdf:318:invoice total carried forward
+```
+
+Page numbers do not fit that format, so they come from `--json`, which groups
+matches by file and records what was searched:
+
+```bash
+flerp --search "invoice" --json ./contracts | jq -r \
+  '.files[] | .file as $f | .matches[] | "\($f)  p\(.page // "-")  \(.line)"'
+```
+
+```json
+{
+  "search": { "query": "invoice", "case_sensitive": true, "regex": false, "whole_word": false },
+  "roots": ["./contracts"],
+  "files_searched": 31,
+  "files_matched": 2,
+  "match_count": 7,
+  "files": [
+    {
+      "file": "contracts/report.pdf",
+      "kind": "pdf",
+      "match_count": 5,
+      "matches": [{ "line_number": 318, "page": 14, "match_count": 1, "line": "invoice total carried forward" }]
+    }
+  ],
+  "skipped": []
+}
+```
+
+Note that this is a different shape from the single-file object above: one file
+gets the full analysis, a sweep gets matches. Which one you get depends only on
+whether you named one file or several.
+
+#### What gets searched
+
+The walk follows the same rule `grep -r` does, with one addition:
+
+- **PDFs are read**, text layer and page structure. That is the point.
+- **Hidden files and directories are skipped.** A walk that descends into
+  `.git` spends its time on object files nobody searched for.
+- **Binaries are skipped**, detected the way grep detects them: a NUL byte in
+  the first 8 KiB. Only that prefix is read, so a multi-gigabyte archive costs
+  one short read rather than a failed attempt to load it as text.
+- **Images are skipped.** The text `flerp` shows for an image is a description
+  it wrote itself, and matching on that would report hits that are not in the
+  file. Naming one directly reports it under `skipped` with that reason.
+- **A file you name by hand is searched anyway**, filter or no filter. Naming a
+  file is you saying you want that file.
+- **Symlinked directories are not followed**, so a link pointing at an ancestor
+  cannot send the walk round in a circle.
+- **Results are sorted by path**, so the same directory reports in the same
+  order on every run.
+
+Nothing is dropped silently: a directory the walk was not allowed to read and a
+file that failed to open both land in `skipped` under `--json`, and on stderr
+otherwise, which keeps stdout parseable.
+
+Only searching works across several files. `--text` has no single text to write
+and `--extract-images` no single document to open, so both say so rather than
+picking a file for you.
+
+Embedded images are never decoded during a sweep — searching does not look at
+them, so a folder of illustrated PDFs costs only its text.
 
 ## Terminal Requirement
 

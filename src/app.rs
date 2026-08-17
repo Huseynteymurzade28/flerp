@@ -25,6 +25,12 @@ pub struct App {
     pub last_tick: Instant,
 }
 
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl App {
     pub fn new() -> Self {
         let mut state = AppState::default();

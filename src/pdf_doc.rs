@@ -68,6 +68,24 @@ impl PdfDocument {
 }
 
 pub fn load(file_path: &str) -> Result<PdfDocument, Box<dyn Error>> {
+    let mut document = load_text(file_path)?;
+
+    // Image extraction is best-effort: a document whose text we can read is
+    // still worth opening even if its page tree defeats us.
+    match Document::load(file_path) {
+        Ok(pdf) => collect_images(&pdf, &mut document),
+        Err(error) => document.image_error = Some(error.to_string()),
+    }
+
+    Ok(document)
+}
+
+/// The text and page structure alone, with no images decoded.
+///
+/// Decoding the embedded rasters is the expensive half of opening a PDF, and a
+/// search never looks at them, so sweeping a folder of illustrated documents
+/// should not pay to decode a single one.
+pub fn load_text(file_path: &str) -> Result<PdfDocument, Box<dyn Error>> {
     let page_texts = extract_page_texts(file_path)?;
 
     let mut text = String::new();
@@ -92,22 +110,13 @@ pub fn load(file_path: &str) -> Result<PdfDocument, Box<dyn Error>> {
         line_cursor += line_count;
     }
 
-    let mut document = PdfDocument {
+    Ok(PdfDocument {
         text,
         pages,
         images: Vec::new(),
         skipped: Vec::new(),
         image_error: None,
-    };
-
-    // Image extraction is best-effort: a document whose text we can read is
-    // still worth opening even if its page tree defeats us.
-    match Document::load(file_path) {
-        Ok(pdf) => collect_images(&pdf, &mut document),
-        Err(error) => document.image_error = Some(error.to_string()),
-    }
-
-    Ok(document)
+    })
 }
 
 /// `pdf-extract` panics on some malformed documents. Contain that so a bad file
