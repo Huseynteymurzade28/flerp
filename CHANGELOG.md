@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Open the file in your editor
+
+flerp finds the line; now it can hand it over. `e` opens the loaded file in
+`$VISUAL`, `$EDITOR` or `vi`, on the selected match in the Search tab and on the
+top line of the viewer everywhere else. Quit the editor and flerp reloads the
+file where you left it, re-running the tree sweep if one was showing.
+
+- The line goes over as `+N`, which vi, vim, neovim, nano, emacs, micro and
+  kakoune all read.
+- PDFs and images are refused with a message: their text is flerp's own
+  extraction, so a line number in it points nowhere in the real file.
+- An editor that cannot be started leaves the session as it was and says which
+  variable to set.
+
 ## 0.7.0 — 2026-08-17
 
 ### The Files pane

@@ -203,6 +203,7 @@ terminators, so abbreviations inflate the count slightly.
 
 - Full-screen terminal interface
 - Directory tree pane beside every mode, with `f` to move between the two
+- `e` opens the file in your editor on the line you are looking at
 - Viewer fills the available height, and `PageUp`/`PageDown` move by one screenful
 - Multiple themes
 - Optional line numbers
@@ -472,6 +473,9 @@ less important ones when the terminal is too narrow to hold them all.
 - `Tab` next mode, `Shift-Tab` previous mode
 - `/` open the search prompt
 - `:` open the go-to-line prompt; digits only, `Enter` jumps
+- `e` open the loaded file in your editor, on the selected match in the Search
+  tab and on the top line of the viewer everywhere else (see
+  [Editing the file](#editing-the-file))
 
 ### Search and Filters
 
@@ -510,6 +514,22 @@ of a symmetric pair would be worse than neither.
 
 - `l` toggle line numbers
 - `z` toggle line wrapping
+
+### Editing the file
+
+flerp only reads, but the line a search turns up is often the line that needs
+changing. `e` hands the file to `$VISUAL`, or `$EDITOR`, or `vi` when neither is
+set, opened on that line with `+N` — the flag vi, vim, neovim, nano, emacs,
+micro and kakoune all understand. Quit the editor and flerp reloads the file
+without losing your place, and a tree you already searched is searched again so
+its match counts stay true.
+
+```bash
+EDITOR=nvim flerp notes.txt
+```
+
+Only text files open this way: a line number in the text flerp extracted from
+a PDF means nothing to an editor.
 
 ## Mouse
 
