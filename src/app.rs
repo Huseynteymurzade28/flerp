@@ -1,14 +1,17 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Position;
 use std::error::Error;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::time::Instant;
 
 use crate::app_structs::{
     AppState, InputMode, TAB_COUNT, TAB_MEDIA, TAB_SEARCH, TAB_SETTINGS, TAB_VIEWER,
 };
 use crate::browser::Browser;
-use crate::file_utils::load_file;
+use crate::editor::{self, EditRequest};
+use crate::file_utils::{load_file, FileRole};
 use crate::pdf_doc::PdfDocument;
 use crate::settings::AppSettings;
 use crate::text_analysis::{
@@ -25,6 +28,9 @@ const SETTINGS_LAST: usize = 7;
 pub struct App {
     pub state: AppState,
     pub last_tick: Instant,
+    /// Set by `e`, taken by the event loop. Running an editor means handing it
+    /// the terminal, and only the loop owns the terminal.
+    pending_edit: Option<EditRequest>,
 }
 
 impl Default for App {
@@ -41,6 +47,7 @@ impl App {
         Self {
             state,
             last_tick: Instant::now(),
+            pending_edit: None,
         }
     }
 
@@ -225,6 +232,76 @@ impl App {
             page.line_count,
             page.image_count
         );
+    }
+
+    /// Ask for the loaded file to be opened in the user's editor.
+    ///
+    /// The line is the selected match in the Search tab, since that is the line
+    /// the user just went looking for, and the top of the viewer everywhere else.
+    fn request_edit(&mut self) {
+        let path = PathBuf::from(&self.state.file_name);
+        if !path.is_file() {
+            self.state.status_message = "No file loaded to edit.".to_string();
+            return;
+        }
+
+        // The text flerp shows for a PDF or an image is something it extracted
+        // or wrote itself, so a line number in it means nothing to an editor.
+        let role = FileRole::of(&path);
+        if role != FileRole::Text {
+            self.state.status_message = format!(
+                "{} is a {} file; only text files open in the editor.",
+                path.display(),
+                role.label()
+            );
+            return;
+        }
+
+        let line = match self.state.search_results.get(self.state.selected_result) {
+            Some(selected) if self.state.current_tab == TAB_SEARCH => selected.line_number,
+            _ => self.state.content_scroll + 1,
+        };
+
+        self.pending_edit = Some(EditRequest { path, line });
+    }
+
+    /// The edit `e` asked for, if any, for the event loop to carry out.
+    pub fn take_edit_request(&mut self) -> Option<EditRequest> {
+        self.pending_edit.take()
+    }
+
+    /// Pick the session back up after the editor exits.
+    ///
+    /// The file is reloaded whatever the editor reported, since a nonzero exit
+    /// does not prove nothing was written. The viewer stays where it was rather
+    /// than jumping to the top, and a swept tree is swept again because the
+    /// counts it shows may no longer be true.
+    pub fn finish_edit(&mut self, request: &EditRequest, outcome: io::Result<ExitStatus>) {
+        let editor = editor::current_editor();
+        let status = match outcome {
+            Ok(status) if status.success() => None,
+            Ok(status) => Some(format!("{editor} exited with {status}")),
+            Err(error) => {
+                self.state.status_message = format!(
+                    "Could not start {editor}: {error}. Set $VISUAL or $EDITOR to choose another."
+                );
+                return;
+            }
+        };
+
+        let scroll = self.state.content_scroll;
+        let name = request.path.to_string_lossy().into_owned();
+        if let Err(error) = self.load_file(&name) {
+            self.state.status_message = format!("Could not reload {name}: {error}");
+            return;
+        }
+        self.state.content_scroll = scroll.min(self.max_content_scroll());
+        self.resweep_tree();
+
+        self.state.status_message = match status {
+            Some(status) => format!("Reloaded {name} · {status}"),
+            None => format!("Reloaded {name} after editing."),
+        };
     }
 
     /// Seed the search box from outside the event loop, as `--search` does.
@@ -604,6 +681,7 @@ impl App {
             }
             KeyCode::Char('[') => self.jump_page(-1),
             KeyCode::Char(']') => self.jump_page(1),
+            KeyCode::Char('e') => self.request_edit(),
             KeyCode::Char('n') => self.step_match(1),
             KeyCode::Char('N') => self.step_match(-1),
             KeyCode::Char('c') => {

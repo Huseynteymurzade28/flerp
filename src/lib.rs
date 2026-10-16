@@ -3,6 +3,7 @@
 pub mod app;
 pub mod app_structs;
 pub mod browser;
+pub mod editor;
 pub mod file_utils;
 pub mod headless;
 pub mod media;

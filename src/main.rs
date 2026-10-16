@@ -14,6 +14,7 @@ use std::{
 use clap::Parser;
 use flerp::app::App;
 use flerp::app_structs::Cli;
+use flerp::editor;
 use flerp::headless::{self, HeadlessRequest};
 use flerp::media::{GraphicsMode, MediaRenderer};
 use flerp::ui_components::ui;
@@ -75,6 +76,32 @@ pub fn run_tui(cli: &Cli, graphics: GraphicsMode) -> Result<(), Box<dyn Error>> 
 
         if crossterm::event::poll(timeout)? && !dispatch(event::read()?, &mut app_instance) {
             break;
+        }
+
+        if let Some(request) = app_instance.take_edit_request() {
+            // The editor needs the terminal as an ordinary screen: cooked
+            // input, the main buffer, and no mouse reports arriving as text.
+            disable_raw_mode()?;
+            execute!(
+                terminal.backend_mut(),
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )?;
+            terminal.show_cursor()?;
+
+            let outcome = editor::open(&request);
+
+            enable_raw_mode()?;
+            execute!(
+                terminal.backend_mut(),
+                EnterAlternateScreen,
+                EnableMouseCapture
+            )?;
+            // ratatui only draws what changed since the last frame, and the
+            // editor has scribbled over all of it.
+            terminal.clear()?;
+
+            app_instance.finish_edit(&request, outcome);
         }
 
         if last_tick_poll.elapsed() >= tick_rate {
